@@ -1,3 +1,4 @@
+from ai_service import AIService
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -12,7 +13,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 app = FastAPI(title="MindNet AI API", lifespan=lifespan)
-
+ai_service = AIService()
 # Упрощённые CORS настройки
 app.add_middleware(
     CORSMiddleware,
@@ -72,3 +73,29 @@ def get_graph():
         })
 
     return {"nodes": nodes, "edges": edges}
+
+
+@app.post("/ai/generate-project/")
+def generate_project():
+    """Генерирует проект на основе всех навыков пользователя"""
+    nodes = crud.get_all_nodes()
+    skills = [n["title"] for n in nodes if n.get("node_type") == "skill"]
+
+    if len(skills) < 2:
+        return {"error": "Нужно минимум 2 навыка для генерации проекта"}
+
+    project = ai_service.generate_project(skills)
+    return project
+
+
+@app.get("/ai/recommendations/")
+def get_recommendations():
+    """Получить рекомендации по навыкам"""
+    nodes = crud.get_all_nodes()
+    skills = [n["title"] for n in nodes if n.get("node_type") == "skill"]
+
+    if len(skills) < 1:
+        return {"recommendations": ["Python", "Git", "SQL"]}
+
+    recommendations = ai_service.get_recommendations(skills)
+    return {"recommendations": recommendations}
