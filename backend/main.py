@@ -180,17 +180,7 @@ def get_recommendations():
     return {"recommendations": recommendations}
 
 
-@app.post("/ai/suggest-connections/")
-def suggest_connections():
-    """ИИ предлагает связи между навыками"""
-    nodes = crud.get_all_nodes()
-    skills = [n["title"] for n in nodes if n.get("node_type") == "skill"]
 
-    if len(skills) < 2:
-        return {"connections": []}
-
-    connections = ai_service.suggest_connections(skills)
-    return {"connections": connections}
 @app.delete("/nodes/all/")
 def delete_all_nodes():
     """Удалить все узлы и связи из базы"""
@@ -202,65 +192,102 @@ def delete_all_nodes():
 @app.post("/ai/suggest-connections/")
 def suggest_connections():
     """ИИ предлагает связи между всеми навыками пользователя"""
+    print("=" * 60)
+    print("🔗 suggest_connections called")
+
     try:
         # Получаем все узлы
         all_nodes = crud.get_all_nodes()
+        print(f"📦 crud.get_all_nodes() returned: {type(all_nodes)}")
+        print(f"   Content: {all_nodes[:2] if isinstance(all_nodes, list) else all_nodes}")
 
-        # Извлекаем названия навыков (поддерживаем оба формата)
+        # Извлекаем названия навыков
         if isinstance(all_nodes, dict) and "nodes" in all_nodes:
             nodes = all_nodes["nodes"]
         else:
             nodes = all_nodes
 
-        # Если это список словарей — берём title где node_type == skill
         if nodes and isinstance(nodes[0], dict):
             skill_names = [n.get("title") for n in nodes if n.get("node_type") == "skill"]
-            nodes_for_lookup = nodes  # Сохраняем для поиска ID
+            nodes_for_lookup = nodes
+            print(f"✅ Extracted {len(skill_names)} skills from dicts")
         else:
-            # Если список строк — используем как есть
             skill_names = [n for n in nodes if isinstance(n, str)]
-            nodes_for_lookup = []  # Не можем искать по ID
+            nodes_for_lookup = []
+            print(f"✅ Using {len(skill_names)} skill names directly")
 
-        print(f"✅ Skills: {skill_names}")
+        print(f"📋 Skills: {skill_names}")
 
         if len(skill_names) < 2:
             return {"connections": [], "message": "Нужно минимум 2 навыка"}
 
         # Получаем предложения от ИИ
+        print("🤖 Calling AI...")
         connections = ai_service.suggest_connections(skill_names)
+        print(f" AI suggested {len(connections)} connections: {connections}")
 
-        # Создаём связи в базе (если есть доступ к полным узлам)
+        # Создаём связи в базе
         created = []
-        if nodes_for_lookup:
-            for conn in connections:
-                try:
-                    from_title = conn.get("from")
-                    to_title = conn.get("to")
-                    relation_type = conn.get("type", "related_to")
+        print(f"\n🔨 Creating {len(connections)} edges in database...")
 
+        for i, conn in enumerate(connections, 1):
+            print(f"\n[{i}/{len(connections)}] Processing: {conn}")
+
+            try:
+                from_title = conn.get("from")
+                to_title = conn.get("to")
+                relation_type = conn.get("type", "related_to")
+
+                print(f"   Looking for: '{from_title}' -> '{to_title}'")
+
+                if nodes_for_lookup:
                     from_node = next((n for n in nodes_for_lookup if n.get("title") == from_title), None)
                     to_node = next((n for n in nodes_for_lookup if n.get("title") == to_title), None)
 
+                    print(
+                        f"   Found nodes: {from_node['id'] if from_node else 'None'} -> {to_node['id'] if to_node else 'None'}")
+
                     if from_node and to_node:
-                        crud.create_edge(
-                            from_node=str(from_node.get("id")),
-                            to_node=str(to_node.get("id")),
+                        from_id = str(from_node.get("id"))
+                        to_id = str(to_node.get("id"))
+
+                        print(f"   Calling crud.create_edge('{from_id}', '{to_id}', '{relation_type}')")
+
+                        edge_result = crud.create_edge(
+                            from_node=from_id,
+                            to_node=to_id,
                             relation_type=relation_type
                         )
-                        created.append(conn)
-                        print(f"✅ Created: {from_title} -> {to_title}")
-                except Exception as e:
-                    print(f"❌ Error: {e}")
-                    continue
+
+                        print(f"   Edge result: {edge_result}")
+
+                        if edge_result:
+                            created.append(conn)
+                            print(f"   ✅ SUCCESS: {from_title} -> {to_title}")
+                        else:
+                            print(f"   ⚠️ Edge result is None/Empty")
+                    else:
+                        print(f"   ⚠️ One or both nodes not found")
+                else:
+                    print(f"   ⚠️ nodes_for_lookup is empty")
+
+            except Exception as e:
+                print(f"   ❌ ERROR: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+
+        print(f"\n✅ Created {len(created)} out of {len(connections)} suggested connections")
+        print("=" * 60)
 
         return {
             "connections": created if nodes_for_lookup else connections,
-            "message": f"Suggested {len(connections)} connections",
+            "message": f"Suggested {len(connections)}, created {len(created)}",
             "created": len(created) if nodes_for_lookup else 0
         }
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error in endpoint: {e}")
         import traceback
         traceback.print_exc()
         return {"error": str(e)}

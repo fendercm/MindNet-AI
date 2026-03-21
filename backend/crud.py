@@ -30,11 +30,14 @@ def get_all_nodes():
     result = db.query(query)
     return [record["n"] for record in result]
 
+
 def create_edge(from_node, to_node, relation_type):
     edge_id = str(uuid.uuid4())
+
+    # Пробуем разные варианты меток
     query = """
-    MATCH (a:KnowledgeNode {id: $from_node})
-    MATCH (b:KnowledgeNode {id: $to_node})
+    MATCH (a {id: $from_node})
+    MATCH (b {id: $to_node})
     CREATE (a)-[r:RELATED_TO {
         id: $id,
         relation_type: $relation_type,
@@ -42,6 +45,7 @@ def create_edge(from_node, to_node, relation_type):
     }]->(b)
     RETURN r
     """
+
     result = db.query(query, {
         "id": edge_id,
         "from_node": from_node,
@@ -49,8 +53,9 @@ def create_edge(from_node, to_node, relation_type):
         "relation_type": relation_type,
         "created_at": datetime.now().isoformat()
     })
-    return result[0]["r"] if result else None
 
+    print(f"🔗 create_edge result: {result}")
+    return result[0]["r"] if result else None
 def get_all_edges():
     query = """
     MATCH (a:KnowledgeNode)-[r:RELATED_TO]->(b:KnowledgeNode)

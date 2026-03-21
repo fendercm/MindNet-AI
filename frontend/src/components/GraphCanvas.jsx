@@ -440,57 +440,13 @@ const suggestConnections = async () => {
       return
     }
 
-    // Перезагружаем граф — используем setNodes и setEdges напрямую
-    const data = await api.getGraph()
-
-    const flowNodes = data.nodes.map(n => {
-      let level = n.level || 1
-      if (!n.level && n.description) {
-        const match = n.description.match(/Level (\d+)/)
-        if (match) level = parseInt(match[1])
-      }
-
-      const levelColors = {
-        1: { background: '#FFEB3B', border: '#FBC02D' },
-        2: { background: '#8BC34A', border: '#689F38' },
-        3: { background: '#4CAF50', border: '#388E3C' },
-        4: { background: '#2196F3', border: '#1976D2' },
-        5: { background: '#9C27B0', border: '#7B1FA2' },
-      }
-
-      const colors = levelColors[level] || levelColors[1]
-
-      return {
-        id: n.id,
-        position: { x: Math.random() * 400, y: Math.random() * 400 },
-        style: {
-          background: colors.background,
-          border: `2px solid ${colors.border}`,
-          borderRadius: '8px',
-          padding: '10px',
-          fontWeight: 'bold',
-          color: level >= 3 ? 'white' : 'black'
-        },
-        data: {
-          label: `${n.title} (L${level})`,
-          level: level
-        }
-      }
-    })
-
-    const flowEdges = data.edges.map(e => ({
-      id: e.id,
-      source: e.from,
-      target: e.to,
-      label: e.relation_type
-    }))
-
-    setNodes(flowNodes)
-    setEdges(flowEdges)
-
     if (result.connections && result.connections.length > 0) {
       alert(`✅ Создано ${result.connections.length} связей!\n\n` +
-            result.connections.map(c => `${c.from} → ${c.to} (${c.type})`).join('\n'))
+            result.connections.map(c => `${c.from} → ${c.to} (${c.type})`).join('\n') +
+            `\n\nСтраница обновится для отображения связей.`)
+
+      // Перезагружаем страницу
+      window.location.reload()
     } else {
       alert('⚠️ Связи не найдены')
     }
