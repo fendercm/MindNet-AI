@@ -189,6 +189,13 @@ def delete_all_nodes():
     return {"message": f"Deleted all nodes and relationships", "deleted": result}
 
 
+def _node_to_dict(node):
+    """Конвертирует Neo4j Node object в dict"""
+    if hasattr(node, 'properties'):
+        return dict(node.properties)
+    return node
+
+
 @app.post("/ai/suggest-connections/")
 def suggest_connections():
     """ИИ предлагает связи между всеми навыками пользователя"""
@@ -199,14 +206,20 @@ def suggest_connections():
         # Получаем все узлы
         all_nodes = crud.get_all_nodes()
         print(f"📦 crud.get_all_nodes() returned: {type(all_nodes)}")
-        print(f"   Content: {all_nodes[:2] if isinstance(all_nodes, list) else all_nodes}")
 
-        # Извлекаем названия навыков
+        # Извлекаем узлы из ответа
         if isinstance(all_nodes, dict) and "nodes" in all_nodes:
             nodes = all_nodes["nodes"]
         else:
             nodes = all_nodes
 
+        print(f"   First node type: {type(nodes[0]) if nodes else 'empty'}")
+
+        # Конвертируем Node objects в dict
+        nodes = [_node_to_dict(n) for n in nodes]
+        print(f"   After conversion: {type(nodes[0]) if nodes else 'empty'}")
+
+        # Извлекаем названия навыков
         if nodes and isinstance(nodes[0], dict):
             skill_names = [n.get("title") for n in nodes if n.get("node_type") == "skill"]
             nodes_for_lookup = nodes
@@ -245,7 +258,7 @@ def suggest_connections():
                     to_node = next((n for n in nodes_for_lookup if n.get("title") == to_title), None)
 
                     print(
-                        f"   Found nodes: {from_node['id'] if from_node else 'None'} -> {to_node['id'] if to_node else 'None'}")
+                        f"   Found nodes: {from_node.get('id') if from_node else 'None'} -> {to_node.get('id') if to_node else 'None'}")
 
                     if from_node and to_node:
                         from_id = str(from_node.get("id"))
