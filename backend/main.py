@@ -201,38 +201,62 @@ def delete_all_nodes():
 
 @app.post("/ai/suggest-connections/")
 def suggest_connections():
-    """Простые связи между навыками (без AI пока)"""
+    """ИИ предлагает связи между всеми навыками пользователя"""
     try:
-        nodes = crud.get_all_nodes()
-        skills = [n for n in nodes if n.get("node_type") == "skill"]
+        # Получаем все узлы
+        all_nodes = crud.get_all_nodes()
 
-        if len(skills) < 2:
+        # Извлекаем названия навыков (поддерживаем оба формата)
+        if isinstance(all_nodes, dict) and "nodes" in all_nodes:
+            nodes = all_nodes["nodes"]
+        else:
+            nodes = all_nodes
+
+        # Если это список словарей — берём title где node_type == skill
+        if nodes and isinstance(nodes[0], dict):
+            skill_names = [n.get("title") for n in nodes if n.get("node_type") == "skill"]
+            nodes_for_lookup = nodes  # Сохраняем для поиска ID
+        else:
+            # Если список строк — используем как есть
+            skill_names = [n for n in nodes if isinstance(n, str)]
+            nodes_for_lookup = []  # Не можем искать по ID
+
+        print(f"✅ Skills: {skill_names}")
+
+        if len(skill_names) < 2:
             return {"connections": [], "message": "Нужно минимум 2 навыка"}
 
-        # Пока создаём простые связи (первый со всеми остальными)
-        created = []
-        first_skill = skills[0]
+        # Получаем предложения от ИИ
+        connections = ai_service.suggest_connections(skill_names)
 
-        for skill in skills[1:]:
-            try:
-                crud.create_edge(
-                    from_node=str(first_skill.get("id")),
-                    to_node=str(skill.get("id")),
-                    relation_type="related_to"
-                )
-                created.append({
-                    "from": first_skill.get("title"),
-                    "to": skill.get("title"),
-                    "type": "related_to"
-                })
-                print(f"✅ Created: {first_skill.get('title')} -> {skill.get('title')}")
-            except Exception as e:
-                print(f"❌ Error: {e}")
-                continue
+        # Создаём связи в базе (если есть доступ к полным узлам)
+        created = []
+        if nodes_for_lookup:
+            for conn in connections:
+                try:
+                    from_title = conn.get("from")
+                    to_title = conn.get("to")
+                    relation_type = conn.get("type", "related_to")
+
+                    from_node = next((n for n in nodes_for_lookup if n.get("title") == from_title), None)
+                    to_node = next((n for n in nodes_for_lookup if n.get("title") == to_title), None)
+
+                    if from_node and to_node:
+                        crud.create_edge(
+                            from_node=str(from_node.get("id")),
+                            to_node=str(to_node.get("id")),
+                            relation_type=relation_type
+                        )
+                        created.append(conn)
+                        print(f"✅ Created: {from_title} -> {to_title}")
+                except Exception as e:
+                    print(f"❌ Error: {e}")
+                    continue
 
         return {
-            "connections": created,
-            "message": f"Created {len(created)} connections"
+            "connections": created if nodes_for_lookup else connections,
+            "message": f"Suggested {len(connections)} connections",
+            "created": len(created) if nodes_for_lookup else 0
         }
 
     except Exception as e:

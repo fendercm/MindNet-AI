@@ -53,17 +53,20 @@ class AIService:
                 "gaps": []
             }
 
-    def suggest_connections(self, nodes: list) -> list:
-        """Предлагает логические связи между навыками"""
+    def suggest_connections(self, skills: list) -> list:
+        """Предлагает логические связи между навыками (принимает список названий)"""
 
-        # Извлекаем только навыки из узлов
-        skills = [n for n in nodes if n.get("node_type") == "skill"]
+        # Если пришли словари — извлекаем названия
+        if skills and isinstance(skills[0], dict):
+            skill_names = [s.get("title") for s in skills if s.get("node_type") == "skill"]
+        else:
+            # Если пришли строки — используем как есть
+            skill_names = [s for s in skills if isinstance(s, str)]
 
-        if len(skills) < 2:
+        if len(skill_names) < 2:
             return []
 
-        # Используем title вместо name
-        skills_str = ", ".join([f"{s.get('title')} (L{s.get('level', 1)})" for s in skills])
+        skills_str = ", ".join(skill_names)
 
         system_prompt = """Ты — архитектор знаний. Найди логические связи между навыками разработчика.
 
@@ -90,83 +93,7 @@ class AIService:
         result = self.ai.query(prompt, system_prompt, return_json=True)
 
         if result["success"]:
-            return result["data"].get("connections", [])
+            connections = result["data"].get("connections", [])
+            print(f"🔗 AI suggested: {connections}")
+            return connections
         return []
-
-    def generate_project(self, skills: list) -> dict:
-        """Генерирует проект на основе навыков"""
-
-        system_prompt = """Ты — ментор по программированию. Предлагай реалистичные пет-проекты."""
-
-        skills_str = ", ".join([s["name"] for s in skills])
-
-        example = {
-            "title": "Telegram Bot for Task Management",
-            "description": "Бот для управления задачами с интеграцией календаря",
-            "technologies": ["Python", "aiogram", "SQLite", "asyncio"],
-            "difficulty": "intermediate",
-            "estimated_hours": 25,
-            "learning_goals": ["async/await", "bot architecture", "database design"]
-        }
-
-        prompt = self._make_json_prompt(
-            f"У пользователя есть навыки: {skills_str}\n\nПредложи проект.",
-            example
-        )
-
-        result = self.ai.query(prompt, system_prompt, return_json=True)
-
-        if result["success"]:
-            return result["data"]
-        return {
-            "title": "Не удалось сгенерировать проект",
-            "description": "Попробуй добавить больше навыков или проверь соединение с ИИ",
-            "technologies": [],
-            "difficulty": "unknown",
-            "estimated_hours": 0
-        }
-
-    def get_recommendations(self, skills: list) -> list:
-        """Рекомендует следующие навыки для изучения"""
-
-        skills_str = ", ".join([s["name"] for s in skills])
-
-        prompt = f"""
-У студента есть навыки: {skills_str}
-
-Посоветуй 3-5 навыков для изучения дальше.
-
-Верни ответ ТОЛЬКО в формате JSON массива без лишнего текста:
-["навык1", "навык2", "навык3"]
-"""
-
-        try:
-            response = self.ai.query(prompt, "", return_json=False)
-
-            if not response["success"]:
-                return ["Python", "Git", "SQL"]
-
-            content = response["data"]
-
-            # Очищаем от markdown
-            if "```json" in content:
-                content = content.split("```json")[1]
-            if "```" in content:
-                content = content.split("```")[0]
-
-            # Ищем JSON в тексте
-            import re
-            json_match = re.search(r'\[[\s\S]*?\]', content)
-            if json_match:
-                content = json_match.group()
-
-            recommendations = json.loads(content)
-
-            if isinstance(recommendations, list) and all(isinstance(s, str) for s in recommendations):
-                return recommendations
-            else:
-                return ["Python", "Git", "SQL"]
-
-        except Exception as e:
-            print(f"Error in get_recommendations: {e}")
-            return ["Python", "Git", "SQL"]
