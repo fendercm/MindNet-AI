@@ -431,3 +431,113 @@ def suggest_connections():
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+
+
+from pydantic import BaseModel
+from typing import Optional
+
+
+class ChatMessage(BaseModel):
+    message: str
+    context: Optional[str] = None  # Дополнительный контекст от пользователя
+
+
+@app.post("/ai/chat/")
+def chat_with_mentor(request: ChatMessage):
+    """
+    Чат с ментором с контекстом графа навыков
+    """
+    try:
+        # Получаем все навыки пользователя
+        all_nodes = crud.get_all_nodes()
+
+        # Конвертируем Node objects в dict
+        nodes = [_node_to_dict(n) for n in all_nodes]
+
+        # Извлекаем навыки
+        skills = [n for n in nodes if n.get("node_type") == "skill"]
+        skills_str = ", ".join([f"{s.get('title')} (L{s.get('level', 1)})" for s in skills])
+
+        # Получаем связи
+        edges = crud.get_all_edges() if hasattr(crud, 'get_all_edges') else []
+        connections_str = "\n".join(
+            [f"- {e.get('from_title')} → {e.get('to_title')} ({e.get('relation_type')})" for e in edges[:10]])
+
+        # Формируем контекст
+        context = f"""
+У пользователя есть навыки:
+{skills_str}
+
+Связи между навыками:
+{connections_str}
+
+Пользователь спросил: {request.message}
+"""
+
+        if request.context:
+            context += f"\nДополнительный контекст: {request.context}"
+
+        system_prompt = """Ты — опытный ментор по программированию. Твоя задача:
+1. Анализировать навыки пользователя
+2. Давать конкретные рекомендации
+3. Предлагать следующие шаги для обучения
+4. Быть дружелюбным и мотивирующим
+
+Форматируй ответ так:
+- Начинай с понимания ситуации
+- Давай конкретные шаги
+- Предлагай ресурсы для обучения
+- Заканчивай вопросом чтобы продолжить диалог
+"""
+
+        # Запрашиваем ответ от ИИ
+        result = ai_service.ai.query(
+            context,
+            system_prompt,
+            return_json=False
+        )
+
+        if result["success"]:
+            response_text = result["data"]
+
+            # Предлагаем действия (парсим ответ)
+            suggested_actions = []
+
+            if "docker" in response_text.lower() or "контейнер" in response_text.lower():
+                suggested_actions.append({
+                    "type": "add_skill",
+                    "label": "Добавить Docker",
+                    "skill": "Docker"
+                })
+
+            if "тест" in response_text.lower() or "pytest" in response_text.lower():
+                suggested_actions.append({
+                    "type": "add_skill",
+                    "label": "Добавить pytest",
+                    "skill": "pytest"
+                })
+
+            return {
+                "response": response_text,
+                "actions": suggested_actions,
+                "context": {
+                    "total_skills": len(skills),
+                    "avg_level": sum(s.get('level', 1) for s in skills) / len(skills) if skills else 0
+                }
+            }
+        else:
+            return {
+                "response": "Извини, произошла ошибка. Попробуй ещё раз.",
+                "actions": [],
+                "context": {}
+            }
+
+    except Exception as e:
+        print(f"❌ Chat error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "response": f"Ошибка: {str(e)}",
+            "actions": [],
+            "context": {}
+        }

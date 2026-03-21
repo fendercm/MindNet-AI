@@ -1,3 +1,4 @@
+import ChatPanel from './ChatPanel'
 import React, { useCallback, useState, useEffect } from 'react'
 import ReactFlow, {
   addEdge, Background, Controls, useNodesState, useEdgesState
@@ -10,6 +11,7 @@ const GraphCanvas = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [newNodeTitle, setNewNodeTitle] = useState('')
   const [descriptionText, setDescriptionText] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
   const [addingFromText, setAddingFromText] = useState(false)
   const [project, setProject] = useState(null)
   const [recommendations, setRecommendations] = useState([])
@@ -267,6 +269,19 @@ const addSkillsFromDescription = async () => {
       💡 Рекомендации
     </button>
     <button
+  onClick={() => setChatOpen(true)}
+  style={{
+    padding: '8px 16px',
+    background: '#FF5722',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer'
+  }}
+>
+  💬 Чат с ментором
+</button>
+    <button
       onClick={clearBoard}
       style={{ padding: '8px 16px', background: '#f44336', color: 'white', border: 'none', borderRadius: '4px' }}
       disabled={loading}
@@ -339,6 +354,7 @@ const addSkillsFromDescription = async () => {
   <span>📌 <strong>database:</strong> SQLite, PostgreSQL</span>
 </div>
   </div>
+  {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
 </div>
 
       {/* Панель с результатом ИИ */}

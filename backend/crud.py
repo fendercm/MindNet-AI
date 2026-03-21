@@ -66,3 +66,30 @@ def delete_all_nodes():
     """Удалить все узлы и связи"""
     query = "MATCH (n) DETACH DELETE n"
     return db.query(query)
+
+
+def get_all_edges():
+    """Получить все связи"""
+    query = """
+    MATCH (a:KnowledgeNode)-[r:RELATED_TO]->(b:KnowledgeNode)
+    RETURN 
+        a.id as from_id,
+        a.title as from_title,
+        b.id as to_id,
+        b.title as to_title,
+        r.relation_type as relation_type,
+        r.id as edge_id
+    """
+    result = db.query(query, {})
+
+    return [
+        {
+            "from_id": record["from_id"],
+            "from_title": record["from_title"],
+            "to_id": record["to_id"],
+            "to_title": record["to_title"],
+            "relation_type": record["relation_type"],
+            "edge_id": record["edge_id"]
+        }
+        for record in result
+    ]
