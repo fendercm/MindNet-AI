@@ -135,8 +135,15 @@ class AIService:
 
         result = self.ai.query(prompt, system_prompt, return_json=True)
 
+        # ЛОГИРОВАНИЕ
+        print(f"🔍 Raw AI response: {result}")
+
         if result["success"]:
-            return result["data"]
+            project = result["data"]
+            print(f"✅ Parsed project: {project.get('title')}")
+            return project
+
+        print(f"❌ AI failed: {result.get('error')}")
         return {
             "title": "Не удалось сгенерировать проект",
             "description": "Попробуй добавить больше навыков или проверь соединение с ИИ",
@@ -146,8 +153,6 @@ class AIService:
         }
 
     def get_recommendations(self, skills: list) -> list:
-        """Рекомендует следующие навыки для изучения"""
-
         # Если skills — это список строк
         if skills and isinstance(skills[0], str):
             skills_str = ", ".join(skills)
@@ -156,25 +161,71 @@ class AIService:
             skills_str = ", ".join([s.get("title", s.get("name", "")) for s in skills if isinstance(s, dict)])
 
         if not skills_str:
+            print("⚠️ No skills provided, returning fallback")
             return ["Python", "Git", "SQL"]
 
-        system_prompt = """Ты — ментор по обучению программированию. Рекомендуй следующие навыки для изучения."""
+        print(f"📚 Getting recommendations for: {skills_str[:100]}...")
 
-        example = {
-            "recommendations": ["Docker", "PostgreSQL", "Redis", "CI/CD", "Testing"]
-        }
+        system_prompt = """Ты — ментор по обучению программированию. Рекомендуй следующие навыки для изучения.
+        
+        ВАЖНО: Верни ответ ТОЛЬКО в формате JSON массива строк.
+        Пример: ["навык1", "навык2", "навык3"]
+        """
 
-        prompt = self._make_json_prompt(
-            f"У студента есть навыки: {skills_str}\n\nПосоветуй 3-5 навыков для изучения дальше.",
-            example
-        )
+        prompt = f"""
+У студента есть навыки: {skills_str}
 
-        result = self.ai.query(prompt, system_prompt, return_json=True)
+Посоветуй 3-5 навыков для изучения дальше.
 
-        if result["success"]:
-            recommendations = result["data"].get("recommendations", [])
-            if isinstance(recommendations, list):
-                return recommendations
+Верни ответ ТОЛЬКО в формате JSON массива:
+["навык1", "навык2", "навык3"]
+"""
 
-        # Fallback
-        return ["Python", "Git", "SQL"]
+        try:
+            # Пробуем через AI
+            result = self.ai.query(prompt, system_prompt, return_json=False)
+
+            print(f"🔍 Raw AI response: {result.get('data', '')[:200]}...")
+
+            if not result["success"]:
+                print(f"⚠️ AI failed, using fallback")
+                return ["Python", "Git", "SQL"]
+
+            content = result["data"]
+
+            # Очищаем от markdown
+            if "```json" in content:
+                content = content.split("```json")[1]
+            if "```" in content:
+                content = content.split("```")[0]
+
+            # Ищем JSON массив в тексте
+            import re
+            json_match = re.search(r'\[[\s\S]*?\]', content)
+            if json_match:
+                content = json_match.group()
+                print(f"🔍 Extracted JSON: {content[:100]}...")
+
+            # Пробуем распарсить
+            try:
+                recommendations = json.loads(content)
+
+                # Проверяем что это список строк
+                if isinstance(recommendations, list) and all(isinstance(s, str) for s in recommendations):
+                    print(f"✅ Parsed {len(recommendations)} recommendations: {recommendations}")
+                    return recommendations
+                else:
+                    print(f"⚠️ Wrong format: {type(recommendations)}")
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON decode error: {e}")
+                print(f"   Content: {content}")
+
+            # Fallback
+            print("⚠️ Using fallback recommendations")
+            return ["Python", "Git", "SQL"]
+
+        except Exception as e:
+            print(f"❌ Error in get_recommendations: {e}")
+            import traceback
+            traceback.print_exc()
+            return ["Python", "Git", "SQL"]

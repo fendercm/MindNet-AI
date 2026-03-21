@@ -107,7 +107,7 @@ class AILayer:
                 "stream": False,
                 "temperature": 0.7
             },
-            timeout=60
+            timeout=180
         )
         response.raise_for_status()
         return response.json()["response"]
