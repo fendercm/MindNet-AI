@@ -97,3 +97,84 @@ class AIService:
             print(f"🔗 AI suggested: {connections}")
             return connections
         return []
+
+    def generate_project(self, skills: list) -> dict:
+        """Генерирует проект на основе навыков"""
+
+        # Если skills — это список строк
+        if skills and isinstance(skills[0], str):
+            skills_str = ", ".join(skills)
+        else:
+            # Если skills — это список словарей
+            skills_str = ", ".join([s.get("title", s.get("name", "")) for s in skills if isinstance(s, dict)])
+
+        if not skills_str:
+            return {
+                "title": "Не удалось сгенерировать проект",
+                "description": "Добавьте больше навыков",
+                "technologies": [],
+                "difficulty": "unknown",
+                "estimated_hours": 0
+            }
+
+        system_prompt = """Ты — ментор по программированию. Предлагай реалистичные пет-проекты."""
+
+        example = {
+            "title": "Telegram Bot for Task Management",
+            "description": "Бот для управления задачами с интеграцией календаря",
+            "technologies": ["Python", "aiogram", "SQLite", "asyncio"],
+            "difficulty": "intermediate",
+            "estimated_hours": 25,
+            "learning_goals": ["async/await", "bot architecture", "database design"]
+        }
+
+        prompt = self._make_json_prompt(
+            f"У пользователя есть навыки: {skills_str}\n\nПредложи проект.",
+            example
+        )
+
+        result = self.ai.query(prompt, system_prompt, return_json=True)
+
+        if result["success"]:
+            return result["data"]
+        return {
+            "title": "Не удалось сгенерировать проект",
+            "description": "Попробуй добавить больше навыков или проверь соединение с ИИ",
+            "technologies": [],
+            "difficulty": "unknown",
+            "estimated_hours": 0
+        }
+
+    def get_recommendations(self, skills: list) -> list:
+        """Рекомендует следующие навыки для изучения"""
+
+        # Если skills — это список строк
+        if skills and isinstance(skills[0], str):
+            skills_str = ", ".join(skills)
+        else:
+            # Если skills — это список словарей
+            skills_str = ", ".join([s.get("title", s.get("name", "")) for s in skills if isinstance(s, dict)])
+
+        if not skills_str:
+            return ["Python", "Git", "SQL"]
+
+        system_prompt = """Ты — ментор по обучению программированию. Рекомендуй следующие навыки для изучения."""
+
+        example = {
+            "recommendations": ["Docker", "PostgreSQL", "Redis", "CI/CD", "Testing"]
+        }
+
+        prompt = self._make_json_prompt(
+            f"У студента есть навыки: {skills_str}\n\nПосоветуй 3-5 навыков для изучения дальше.",
+            example
+        )
+
+        result = self.ai.query(prompt, system_prompt, return_json=True)
+
+        if result["success"]:
+            recommendations = result["data"].get("recommendations", [])
+            if isinstance(recommendations, list):
+                return recommendations
+
+        # Fallback
+        return ["Python", "Git", "SQL"]
