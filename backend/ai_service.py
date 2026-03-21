@@ -5,7 +5,7 @@ import json
 
 class AIService:
     def __init__(self):
-        self.ai = ai  # Используем единый слой
+        self.ai = ai
 
     def _make_json_prompt(self, instruction: str, example: dict) -> str:
         """Формирует промпт с требованием вернуть чистый JSON"""
@@ -53,22 +53,37 @@ class AIService:
                 "gaps": []
             }
 
-    def suggest_connections(self, skills: list) -> list:
+    def suggest_connections(self, nodes: list) -> list:
         """Предлагает логические связи между навыками"""
 
-        system_prompt = """Ты — архитектор знаний. Найди логические связи между навыками."""
+        # Извлекаем только навыки из узлов
+        skills = [n for n in nodes if n.get("node_type") == "skill"]
 
-        skills_str = ", ".join([s["name"] for s in skills])
+        if len(skills) < 2:
+            return []
+
+        # Используем title вместо name
+        skills_str = ", ".join([f"{s.get('title')} (L{s.get('level', 1)})" for s in skills])
+
+        system_prompt = """Ты — архитектор знаний. Найди логические связи между навыками разработчика.
+
+        Типы связей:
+        - requires: навык требует другой навык (FastAPI requires Python)
+        - extends: навык расширяет другой (TypeScript extends JavaScript)
+        - complements: навыки дополняют друг друга (React complements FastAPI)
+        - used_with: навыки используются вместе (Git used_with GitHub)
+        """
 
         example = {
             "connections": [
-                {"from": "Python", "to": "FastAPI", "type": "requires"},
-                {"from": "React", "to": "TypeScript", "type": "extends"}
+                {"from": "FastAPI", "to": "Python", "type": "requires"},
+                {"from": "aiogram", "to": "asyncio", "type": "uses"},
+                {"from": "React", "to": "JavaScript", "type": "requires"}
             ]
         }
 
         prompt = self._make_json_prompt(
-            f"Навыки: {skills_str}\n\nПредложи связи между ними.",
+            f"Навыки пользователя: {skills_str}\n\nПредложи логические связи между ними.",
             example
         )
 
@@ -110,3 +125,48 @@ class AIService:
             "difficulty": "unknown",
             "estimated_hours": 0
         }
+
+    def get_recommendations(self, skills: list) -> list:
+        """Рекомендует следующие навыки для изучения"""
+
+        skills_str = ", ".join([s["name"] for s in skills])
+
+        prompt = f"""
+У студента есть навыки: {skills_str}
+
+Посоветуй 3-5 навыков для изучения дальше.
+
+Верни ответ ТОЛЬКО в формате JSON массива без лишнего текста:
+["навык1", "навык2", "навык3"]
+"""
+
+        try:
+            response = self.ai.query(prompt, "", return_json=False)
+
+            if not response["success"]:
+                return ["Python", "Git", "SQL"]
+
+            content = response["data"]
+
+            # Очищаем от markdown
+            if "```json" in content:
+                content = content.split("```json")[1]
+            if "```" in content:
+                content = content.split("```")[0]
+
+            # Ищем JSON в тексте
+            import re
+            json_match = re.search(r'\[[\s\S]*?\]', content)
+            if json_match:
+                content = json_match.group()
+
+            recommendations = json.loads(content)
+
+            if isinstance(recommendations, list) and all(isinstance(s, str) for s in recommendations):
+                return recommendations
+            else:
+                return ["Python", "Git", "SQL"]
+
+        except Exception as e:
+            print(f"Error in get_recommendations: {e}")
+            return ["Python", "Git", "SQL"]

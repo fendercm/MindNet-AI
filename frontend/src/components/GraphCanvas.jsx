@@ -311,6 +311,20 @@ const addSkillsFromDescription = async () => {
     >
       {addingFromText ? '🤖 Добавляю...' : '✨ Добавить'}
     </button>
+    <button
+  onClick={suggestConnections}
+  style={{
+    padding: '8px 16px',
+    background: '#FF9800',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer'
+  }}
+  disabled={loading}
+>
+  🔗 Авто-связи
+</button>
     {/* Легенда категорий */}
 <div style={{
   display: 'flex',
@@ -412,5 +426,33 @@ const addSkillsFromDescription = async () => {
     </div>
   )
 }
+const suggestConnections = async () => {
+  try {
+    const response = await fetch('http://localhost:8000/ai/suggest-connections/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
 
+    const result = await response.json()
+
+    if (result.error) {
+      alert('Ошибка: ' + result.error)
+      return
+    }
+
+    // Перезагружаем граф
+    await loadGraph()
+
+    if (result.connections && result.connections.length > 0) {
+      alert(`✅ Создано ${result.connections.length} связей!\n\n` +
+            result.connections.map(c => `${c.from} → ${c.to} (${c.type})`).join('\n'))
+    } else {
+      alert('⚠️ Связи не найдены')
+    }
+
+  } catch (error) {
+    console.error('Error suggesting connections:', error)
+    alert('Ошибка при создании связей: ' + error.message)
+  }
+}
 export default GraphCanvas

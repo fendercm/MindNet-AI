@@ -197,3 +197,46 @@ def delete_all_nodes():
     query = "MATCH (n) DETACH DELETE n"
     result = db.query(query)
     return {"message": f"Deleted all nodes and relationships", "deleted": result}
+
+
+@app.post("/ai/suggest-connections/")
+def suggest_connections():
+    """Простые связи между навыками (без AI пока)"""
+    try:
+        nodes = crud.get_all_nodes()
+        skills = [n for n in nodes if n.get("node_type") == "skill"]
+
+        if len(skills) < 2:
+            return {"connections": [], "message": "Нужно минимум 2 навыка"}
+
+        # Пока создаём простые связи (первый со всеми остальными)
+        created = []
+        first_skill = skills[0]
+
+        for skill in skills[1:]:
+            try:
+                crud.create_edge(
+                    from_node=str(first_skill.get("id")),
+                    to_node=str(skill.get("id")),
+                    relation_type="related_to"
+                )
+                created.append({
+                    "from": first_skill.get("title"),
+                    "to": skill.get("title"),
+                    "type": "related_to"
+                })
+                print(f"✅ Created: {first_skill.get('title')} -> {skill.get('title')}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                continue
+
+        return {
+            "connections": created,
+            "message": f"Created {len(created)} connections"
+        }
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
