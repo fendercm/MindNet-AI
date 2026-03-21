@@ -20,22 +20,40 @@ const GraphCanvas = () => {
     loadGraph()
   }, [])
 
-  const loadGraph = async () => {
+const loadGraph = async () => {
   const data = await api.getGraph()
 
-  const flowNodes = data.nodes.map(n => {
-    // Извлекаем уровень из description или используем level поле
+  // Группируем узлы по категориям
+  const categories = {}
+
+  const flowNodes = data.nodes.map((n, index) => {
     let level = n.level || 1
 
-    // Пробуем распарсить description если level не задан
     if (!n.level && n.description) {
       const match = n.description.match(/Level (\d+)/)
-      if (match) {
-        level = parseInt(match[1])
-      }
+      if (match) level = parseInt(match[1])
     }
 
-    // Цвета для разных уровней
+    // Извлекаем категорию из description
+    let category = 'other'
+    if (n.description) {
+      const catMatch = n.description.match(/^(language|framework|library|database|tool|concept)/i)
+      if (catMatch) category = catMatch[1].toLowerCase()
+    }
+
+    // Позиционируем по категориям
+    const categoryPositions = {
+      'language': { x: 100, y: 100 },
+      'framework': { x: 400, y: 100 },
+      'library': { x: 700, y: 100 },
+      'database': { x: 100, y: 400 },
+      'tool': { x: 400, y: 400 },
+      'other': { x: 700, y: 400 }
+    }
+
+    const basePos = categoryPositions[category] || categoryPositions['other']
+
+    // Цвета для уровней
     const levelColors = {
       1: { background: '#FFEB3B', border: '#FBC02D' },
       2: { background: '#8BC34A', border: '#689F38' },
@@ -48,18 +66,24 @@ const GraphCanvas = () => {
 
     return {
       id: n.id,
-      position: { x: Math.random() * 400, y: Math.random() * 400 },
+      position: {
+        x: basePos.x + (index % 3) * 150,
+        y: basePos.y + Math.floor(index / 3) * 100
+      },
       style: {
         background: colors.background,
         border: `2px solid ${colors.border}`,
         borderRadius: '8px',
         padding: '10px',
         fontWeight: 'bold',
-        color: level >= 3 ? 'white' : 'black'
+        color: level >= 3 ? 'white' : 'black',
+        minWidth: '120px',
+        textAlign: 'center'
       },
       data: {
         label: `${n.title} (L${level})`,
-        level: level
+        level: level,
+        category: category
       }
     }
   })
@@ -68,13 +92,14 @@ const GraphCanvas = () => {
     id: e.id,
     source: e.from,
     target: e.to,
-    label: e.relation_type
+    label: e.relation_type,
+    style: { stroke: '#666', strokeWidth: 2 },
+    labelStyle: { fill: '#666', fontWeight: 500 }
   }))
 
   setNodes(flowNodes)
   setEdges(flowEdges)
 }
-
   const onConnect = useCallback(
     (params) => {
       api.createEdge({
@@ -286,6 +311,19 @@ const addSkillsFromDescription = async () => {
     >
       {addingFromText ? '🤖 Добавляю...' : '✨ Добавить'}
     </button>
+    {/* Легенда категорий */}
+<div style={{
+  display: 'flex',
+  gap: '15px',
+  fontSize: '12px',
+  color: '#666',
+  marginTop: '5px'
+}}>
+  <span>📌 <strong>language:</strong> Python, JS</span>
+  <span>📌 <strong>framework:</strong> FastAPI, Django</span>
+  <span>📌 <strong>library:</strong> aiogram, requests</span>
+  <span>📌 <strong>database:</strong> SQLite, PostgreSQL</span>
+</div>
   </div>
 </div>
 
