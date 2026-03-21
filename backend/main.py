@@ -63,19 +63,51 @@ def create_edge(edge: EdgeCreate):
 
 @app.get("/graph/")
 def get_graph():
-    nodes = crud.get_all_nodes()
-    edges_data = crud.get_all_edges()
+    """Получить весь граф (узлы + связи)"""
+    try:
+        nodes_result = crud.get_all_nodes()
 
-    edges = []
-    for record in edges_data:
-        edges.append({
-            "id": record["r"]["id"],
-            "from": record["a"]["id"],
-            "to": record["b"]["id"],
-            "relation_type": record["r"]["relation_type"]
-        })
+        # Извлекаем узлы
+        nodes = []
+        if isinstance(nodes_result, dict) and "nodes" in nodes_result:
+            nodes = nodes_result["nodes"]
+        elif isinstance(nodes_result, list):
+            nodes = nodes_result
 
-    return {"nodes": nodes, "edges": edges}
+        # Конвертируем Node objects в dict
+        nodes = [_node_to_dict(n) for n in nodes]
+
+        # Получаем связи
+        edges_result = crud.get_all_edges() if hasattr(crud, 'get_all_edges') else []
+
+        edges = []
+        for edge in edges_result:
+            try:
+                edges.append({
+                    "id": edge.get("edge_id", str(uuid.uuid4())),
+                    "from": edge.get("from_id"),
+                    "to": edge.get("to_id"),
+                    "relation_type": edge.get("relation_type", "related_to")
+                })
+            except Exception as e:
+                print(f"⚠️ Error processing edge: {e}")
+                continue
+
+        print(f"✅ Graph: {len(nodes)} nodes, {len(edges)} edges")
+
+        return {
+            "nodes": nodes,
+            "edges": edges
+        }
+
+    except Exception as e:
+        print(f"❌ Error in get_graph: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "nodes": [],
+            "edges": []
+        }
 
 @app.post("/ai/decompose/")
 def decompose_skills(text: str):

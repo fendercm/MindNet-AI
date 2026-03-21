@@ -81,24 +81,29 @@ export default function ChatPanel({ onClose }) {
   }
 
   const handleAction = async (action) => {
-    if (action.type === 'add_skill') {
-      try {
-        const response = await fetch(`${API_BASE}/ai/add-skills/?text=${encodeURIComponent(action.skill)}`, {
-          method: 'POST'
-        })
-        const result = await response.json()
+  if (action.type === 'add_skill') {
+    try {
+      const response = await fetch(`${API_BASE}/ai/add-skills/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: action.skill })
+      })
 
-        if (result.skills && result.skills.length > 0) {
-          alert(`✅ Навык "${action.skill}" добавлен!`)
-          // Перезагружаем страницу чтобы обновить граф
-          window.location.reload()
-        }
-      } catch (error) {
-        console.error('Error adding skill:', error)
-        alert('Ошибка при добавлении навыка')
+      const result = await response.json()
+
+      if (result.skills && result.skills.length > 0) {
+        alert(`✅ Навык "${action.skill}" добавлен!`)
+        // Перезагружаем страницу чтобы обновить граф
+        window.location.reload()
+      } else if (result.error) {
+        alert(`❌ Ошибка: ${result.error}`)
       }
+    } catch (error) {
+      console.error('Error adding skill:', error)
+      alert('Ошибка при добавлении навыка')
     }
   }
+}
 
   return (
     <div style={{
