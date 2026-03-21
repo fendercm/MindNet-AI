@@ -57,3 +57,7 @@ def get_all_edges():
     RETURN a, r, b
     """
     return db.query(query)
+def delete_all_nodes():
+    """Удалить все узлы и связи"""
+    query = "MATCH (n) DETACH DELETE n"
+    return db.query(query)

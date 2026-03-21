@@ -26,5 +26,9 @@ export const api = {
   getRecommendations: async () => {
     const res = await axios.get(`${API_BASE}/ai/recommendations/`)
     return res.data
+  },
+  clearAll: async () => {
+    const res = await axios.delete(`${API_BASE}/nodes/all/`)
+    return res.data
   }
 }

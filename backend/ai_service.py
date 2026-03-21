@@ -1,105 +1,112 @@
-from openai import OpenAI
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+# backend/ai_service.py
+from ai_layer import ai
+import json
 
 
 class AIService:
     def __init__(self):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.ai = ai  # Используем единый слой
 
-    def generate_project(self, skills: list) -> dict:
-        """Генерирует идею проекта на основе навыков"""
+    def _make_json_prompt(self, instruction: str, example: dict) -> str:
+        """Формирует промпт с требованием вернуть чистый JSON"""
+        return f"""{instruction}
 
-        skills_str = ", ".join(skills)
+ВАЖНО: Верни ответ ТОЛЬКО в формате JSON без лишнего текста, объяснений или markdown.
+Пример формата:
+{json.dumps(example, ensure_ascii=False, indent=2)}
+"""
 
-        prompt = f"""
-        Ты — ментор по программированию. У студента есть следующие навыки: {skills_str}
+    def decompose_skills(self, user_text: str) -> dict:
+        """Превращает текст пользователя в дерево навыков"""
 
-        Придумай идею для пет-проекта, который:
-        1. Задействует максимум этих навыков
-        2. Реалистичен для выполнения за 1-2 недели
-        3. Будет хорошим дополнением для портфолио
+        system_prompt = """Ты — эксперт по анализу навыков разработчика.
+Твоя задача: извлечь из текста навыки, определить их уровень (1-5), 
+категорию, родительский навык (если есть) и связи между ними."""
 
-        Верни ответ ТОЛЬКО в JSON формате:
-        {{
-            "title": "Название проекта",
-            "description": "Описание что делать",
-            "technologies": ["технология1", "технология2"],
-            "difficulty": "beginner/intermediate/advanced",
-            "estimated_hours": 20
-        }}
-        """
+        example = {
+            "skills": [
+                {"name": "Python", "level": 3, "category": "language", "parent": None},
+                {"name": "FastAPI", "level": 2, "category": "framework", "parent": "Python"}
+            ],
+            "connections": [
+                {"from": "FastAPI", "to": "Python", "type": "requires"}
+            ],
+            "gaps": [
+                {"skill": "pytest", "reason": "Для тестирования API"}
+            ]
+        }
 
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "Ты помощник для генерации идей проектов."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=500
-            )
+        prompt = self._make_json_prompt(
+            f"Пользователь сказал: \"{user_text}\"\n\nИзвлеки навыки и связи.",
+            example
+        )
 
-            import json
-            content = response.choices[0].message.content.strip()
+        result = self.ai.query(prompt, system_prompt, return_json=True)
 
-            # Извлекаем JSON из ответа
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-
-            project = json.loads(content)
-            return project
-
-        except Exception as e:
+        if result["success"]:
+            return result["data"]
+        else:
             return {
-                "error": str(e),
-                "title": "Не удалось сгенерировать проект",
-                "description": "Попробуй добавить больше навыков или проверь API ключ"
+                "error": result["error"],
+                "skills": [],
+                "connections": [],
+                "gaps": []
             }
 
-    def get_recommendations(self, skills: list) -> list:
-        """Рекомендует следующие навыки для изучения"""
+    def suggest_connections(self, skills: list) -> list:
+        """Предлагает логические связи между навыками"""
 
-        skills_str = ", ".join(skills)
+        system_prompt = """Ты — архитектор знаний. Найди логические связи между навыками."""
 
-        prompt = f"""
-        У студента есть навыки: {skills_str}
+        skills_str = ", ".join([s["name"] for s in skills])
 
-        Посоветуй 3-5 навыков для изучения дальше, которые:
-        1. Логично дополняют текущие знания
-        2. Востребованы на рынке
-        3. Помогут расти в карьере
+        example = {
+            "connections": [
+                {"from": "Python", "to": "FastAPI", "type": "requires"},
+                {"from": "React", "to": "TypeScript", "type": "extends"}
+            ]
+        }
 
-        Верни ответ ТОЛЬКО в JSON формате массива:
-        ["навык1", "навык2", "навык3"]
-        """
+        prompt = self._make_json_prompt(
+            f"Навыки: {skills_str}\n\nПредложи связи между ними.",
+            example
+        )
 
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "Ты карьерный советник в IT."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=300
-            )
+        result = self.ai.query(prompt, system_prompt, return_json=True)
 
-            import json
-            content = response.choices[0].message.content.strip()
+        if result["success"]:
+            return result["data"].get("connections", [])
+        return []
 
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
+    def generate_project(self, skills: list) -> dict:
+        """Генерирует проект на основе навыков"""
 
-            recommendations = json.loads(content)
-            return recommendations
+        system_prompt = """Ты — ментор по программированию. Предлагай реалистичные пет-проекты."""
 
-        except Exception as e:
-            return ["Python", "Git", "SQL"]  # Fallback рекомендации
+        skills_str = ", ".join([s["name"] for s in skills])
+
+        example = {
+            "title": "Telegram Bot for Task Management",
+            "description": "Бот для управления задачами с интеграцией календаря",
+            "technologies": ["Python", "aiogram", "SQLite", "asyncio"],
+            "difficulty": "intermediate",
+            "estimated_hours": 25,
+            "learning_goals": ["async/await", "bot architecture", "database design"]
+        }
+
+        prompt = self._make_json_prompt(
+            f"У пользователя есть навыки: {skills_str}\n\nПредложи проект.",
+            example
+        )
+
+        result = self.ai.query(prompt, system_prompt, return_json=True)
+
+        if result["success"]:
+            return result["data"]
+        return {
+            "title": "Не удалось сгенерировать проект",
+            "description": "Попробуй добавить больше навыков или проверь соединение с ИИ",
+            "technologies": [],
+            "difficulty": "unknown",
+            "estimated_hours": 0
+        }
