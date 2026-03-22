@@ -87,24 +87,38 @@ const GraphCanvas = () => {
       }
     })
 
-    const flowEdges = data.edges.map(e => ({
-      id: e.id || `${e.from}-${e.to}`,
-      source: e.from,
-      target: e.to,
-      label: e.relation_type || '',
-      animated: true,
-      style: {
-        stroke: '#666',
-        strokeWidth: 2,
-        markerEnd: {
-          type: 'arrowclosed',
-          width: 20,
-          height: 20,
-          color: '#666'
-        }
-      },
-      labelStyle: { fill: '#666', fontWeight: 500, fontSize: 10 }
-    }))
+    const flowEdges = data.edges.map(e => {
+  console.log('🔗 Creating edge from backend:', e)
+
+  return {
+    id: e.id || `${e.from}-${e.to}`,
+    source: e.from,
+    target: e.to,
+    label: e.relation_type || '',
+    type: 'smoothstep', // Тип линии
+    animated: false,
+    style: {
+      stroke: '#666',
+      strokeWidth: 2,
+    },
+    markerEnd: {
+      type: 'arrowclosed',
+      color: '#666',
+      width: 20,
+      height: 20,
+    },
+    labelStyle: {
+      fill: '#666',
+      fontWeight: 500,
+      fontSize: 10,
+      background: 'white',
+      padding: 2
+    },
+    labelBgPadding: 4,
+    labelBgBorderRadius: 2,
+    labelBgFill: 'white'
+  }
+})
 
     console.log('✅ Nodes:', flowNodes.length, 'Edges:', flowEdges.length)
     setNodes(flowNodes)

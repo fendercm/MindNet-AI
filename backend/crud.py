@@ -71,25 +71,24 @@ def delete_all_nodes():
 def get_all_edges():
     """Получить все связи"""
     query = """
-    MATCH (a:KnowledgeNode)-[r:RELATED_TO]->(b:KnowledgeNode)
+    MATCH (a)-[r:RELATED_TO]->(b)
     RETURN 
-        a.id as from_id,
-        a.title as from_title,
-        b.id as to_id,
-        b.title as to_title,
+        r.id as id,
+        a.id as from,
+        b.id as to,
         r.relation_type as relation_type,
-        r.id as edge_id
+        r.created_at as created_at
     """
-    result = db.query(query, {})
+    result = db.query(query)
 
-    return [
-        {
-            "from_id": record["from_id"],
-            "from_title": record["from_title"],
-            "to_id": record["to_id"],
-            "to_title": record["to_title"],
-            "relation_type": record["relation_type"],
-            "edge_id": record["edge_id"]
-        }
-        for record in result
-    ]
+    edges = []
+    for record in result:
+        edges.append({
+            "id": record["id"],
+            "from": record["from"],
+            "to": record["to"],
+            "relation_type": record["relation_type"]
+        })
+
+    print(f"🔗 get_all_edges found {len(edges)} edges")
+    return edges
