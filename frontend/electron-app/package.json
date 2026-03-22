@@ -1,0 +1,18 @@
+{
+  "name": "mindnet-ai-desktop",
+  "version": "1.0.0",
+  "description": "MindNet AI - Desktop Application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-packager . MindNet-AI --platform=win32 --arch=x64 --out=dist --overwrite",
+    "build": "electron-packager . MindNet-AI --platform=win32 --arch=x64 --out=dist --overwrite --icon=icon.ico"
+  },
+  "author": "Max",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-packager": "^17.1.2"
+  }
+}
