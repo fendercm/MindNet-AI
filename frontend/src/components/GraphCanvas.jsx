@@ -5,9 +5,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { api } from '../api/client'
-import { toPng } from 'html-to-image'  // ✅ Добавлен импорт
-
-const API_BASE = 'http://localhost:8000'
+import { toPng } from 'html-to-image'
 
 const GraphCanvas = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -28,7 +26,6 @@ const GraphCanvas = () => {
     loadGraph()
   }, [])
 
-  // ✅ Фильтрация через useMemo (правильный подход)
   const filteredNodes = useMemo(() => {
     return nodes.filter(node => {
       if (searchQuery && !node.data.label.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -46,23 +43,21 @@ const GraphCanvas = () => {
 
   const loadGraph = async () => {
     const data = await api.getGraph()
+    console.log('📊 Graph data:', data)
 
-    const flowNodes = data.nodes.map((n, index) => {
-      // Извлекаем уровень
+    const flowNodes = data.nodes.map((n) => {
       let level = n.level || 1
       if (!n.level && n.description) {
         const match = n.description.match(/Level (\d+)/)
         if (match) level = parseInt(match[1])
       }
 
-      // Извлекаем категорию
       let category = 'other'
       if (n.description) {
         const catMatch = n.description.match(/^(language|framework|library|database|tool|concept)/i)
         if (catMatch) category = catMatch[1].toLowerCase()
       }
 
-      // Цвета для уровней
       const levelColors = {
         1: { background: '#FFEB3B', border: '#FBC02D' },
         2: { background: '#8BC34A', border: '#689F38' },
@@ -72,19 +67,14 @@ const GraphCanvas = () => {
       }
 
       const colors = levelColors[level] || levelColors[1]
-
-      // Поиск по названию
       const isMatched = searchQuery && n.title && n.title.toLowerCase().includes(searchQuery.toLowerCase())
 
       return {
         id: n.id,
-        position: {
-          x: Math.random() * 400,
-          y: Math.random() * 400
-        },
+        position: { x: Math.random() * 400, y: Math.random() * 400 },
         style: {
           background: colors.background,
-          border: isMatched ? '3px solid #FF5722' : ('2px solid ' + colors.border),
+          border: isMatched ? '3px solid #FF5722' : '2px solid ' + colors.border,
           borderRadius: '8px',
           padding: '10px',
           fontWeight: 'bold',
@@ -93,24 +83,31 @@ const GraphCanvas = () => {
           minWidth: '120px',
           textAlign: 'center'
         },
-        data: {
-          label: `${n.title} (L${level})`,
-          level: level,
-          category: category
-        }
+        data: { label: `${n.title} (L${level})`, level, category }
       }
-    }) // ✅ Одна закрывающая скобка для map
+    })
 
     const flowEdges = data.edges.map(e => ({
-      id: e.id,
+      id: e.id || `${e.from}-${e.to}`,
       source: e.from,
       target: e.to,
-      label: e.relation_type,
-      style: { stroke: '#666', strokeWidth: 2 },
-      labelStyle: { fill: '#666', fontWeight: 500 }
+      label: e.relation_type || '',
+      animated: true,
+      style: {
+        stroke: '#666',
+        strokeWidth: 2,
+        markerEnd: {
+          type: 'arrowclosed',
+          width: 20,
+          height: 20,
+          color: '#666'
+        }
+      },
+      labelStyle: { fill: '#666', fontWeight: 500, fontSize: 10 }
     }))
 
-    setNodes(flowNodes)  // ✅ Устанавливаем flowNodes, фильтрация через useMemo
+    console.log('✅ Nodes:', flowNodes.length, 'Edges:', flowEdges.length)
+    setNodes(flowNodes)
     setEdges(flowEdges)
   }
 
@@ -212,7 +209,6 @@ const GraphCanvas = () => {
     }
   }
 
-  // ✅ Функция ВНУТРИ компонента (до return)
   const suggestConnections = async () => {
     try {
       const response = await fetch('http://localhost:8000/ai/suggest-connections/', {
@@ -225,15 +221,15 @@ const GraphCanvas = () => {
         return
       }
       if (result.connections && result.connections.length > 0) {
-        alert(`✅ Создано ${result.connections.length} связей!\n` +
+        await loadGraph()
+        alert(`✅ Создано ${result.connections.length} связей!\n\n` +
               result.connections.map(c => `${c.from} → ${c.to} (${c.type})`).join('\n'))
-        await loadGraph()  // ✅ Перезагружаем граф вместо reload
       } else {
         alert('⚠️ Связи не найдены')
       }
     } catch (error) {
-      console.error('Error:', error)
-      alert('Ошибка: ' + error.message)
+      console.error('Error suggesting connections:', error)
+      alert('Ошибка при создании связей: ' + error.message)
     }
   }
 
@@ -259,14 +255,12 @@ const GraphCanvas = () => {
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
-      {/* Верхняя панель */}
       <div style={{
         position: 'absolute', top: 10, left: 10, right: 420, zIndex: 1000,
         background: 'white', padding: '10px', borderRadius: '8px',
         boxShadow: '0 2px 10px rgba(0,0,0,0.1)', display: 'flex',
         flexDirection: 'column', gap: '10px'
       }}>
-        {/* Кнопки */}
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <input value={newNodeTitle} onChange={(e) => setNewNodeTitle(e.target.value)}
             placeholder="Название навыка" style={{ padding: '8px', width: '150px' }} />
@@ -297,7 +291,6 @@ const GraphCanvas = () => {
           </button>
         </div>
 
-        {/* Поле ввода */}
         <div style={{ display: 'flex', gap: '10px', borderTop: '1px solid #eee', paddingTop: '10px' }}>
           <input value={descriptionText} onChange={(e) => setDescriptionText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addSkillsFromDescription()}
@@ -309,13 +302,11 @@ const GraphCanvas = () => {
           </button>
         </div>
 
-        {/* Легенда */}
         <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#666' }}>
           <span>📌 language</span><span>📌 framework</span><span>📌 library</span><span>📌 database</span>
         </div>
       </div>
 
-      {/* Фильтры */}
       <div style={{
         position: 'absolute', top: 140, left: 10, zIndex: 999, background: 'white',
         padding: '10px', borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
@@ -341,10 +332,8 @@ const GraphCanvas = () => {
         </button>
       </div>
 
-      {/* Чат */}
       {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
 
-      {/* Панель ИИ */}
       {showPanel && (
         <div style={{
           position: 'absolute', top: 70, right: 20, zIndex: 1000, background: 'white',
@@ -380,9 +369,8 @@ const GraphCanvas = () => {
         </div>
       )}
 
-      {/* Граф */}
       <ReactFlow
-        nodes={filteredNodes}  // ✅ Используем отфильтрованные узлы
+        nodes={filteredNodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -396,4 +384,4 @@ const GraphCanvas = () => {
   )
 }
 
-export default GraphCanvas  // ✅ export в конце
+export default GraphCanvas
