@@ -10,8 +10,17 @@ from ai_service import AIService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.connect()
+    # Старт
+    try:
+        db.connect()
+        print("🚀 MindNet AI запущен")
+    except Exception as e:
+        print(f"❌ Не удалось запустить: {e}")
+        raise e
+
     yield
+
+    # Завершение
     db.close()
 
 app = FastAPI(title="MindNet AI API", lifespan=lifespan)

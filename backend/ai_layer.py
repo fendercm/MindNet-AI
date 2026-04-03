@@ -3,154 +3,210 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-from typing import Optional, List, Dict
-
-# Импортируем Google Gemini
-try:
-    import google.generativeai as genai
-
-    HAS_GEMINI = True
-except ImportError:
-    HAS_GEMINI = False
 
 load_dotenv()
 
-
 class AILayer:
-    """Единый интерфейс к разным ИИ-моделям с fallback-логикой"""
+    """
+    Единый интерфейс к ИИ моделям.
+    Gemini и OpenAI — через requests + прокси (для РФ).
+    Без SDK библиотек — только чистый HTTP.
+    """
 
     def __init__(self):
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
-        self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        self.gemini_key  = os.getenv("GEMINI_API_KEY", "")
+        self.openai_key  = os.getenv("OPENAI_API_KEY", "")
 
-        # Настраиваем Gemini если есть ключ
-        if HAS_GEMINI and self.gemini_key:
-            genai.configure(api_key=self.gemini_key)
-            model_names = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
-            self.gemini_model = None
-            for model_name in model_names:
-                try:
-                    self.gemini_model = genai.GenerativeModel(model_name)
-                    print(f"✅ Gemini initialized: {model_name}")
-                    break
-                except Exception as e:
-                    print(f"⚠️ {model_name} not available: {e}")
-                    continue
+        # Порядок моделей из .env
+        primary  = os.getenv("AI_PRIMARY",  "gemini")
+        fallback = os.getenv("AI_FALLBACK", "openai")
+        self.model_priority = []
+        for m in [primary, fallback]:
+            if m and m not in self.model_priority:
+                self.model_priority.append(m)
+
+        # --- Сессия ТОЛЬКО для AI запросов ---
+        # Neo4j driver не использует эту сессию → конфликта нет
+        self.session = requests.Session()
+
+        use_proxy = os.getenv("USE_PROXY", "false").lower() == "true"
+        proxy_url = os.getenv("PROXY_URL", "")
+
+        if use_proxy and proxy_url:
+            self.session.proxies = {
+                "http":  proxy_url,
+                "https": proxy_url,
+            }
+            # Локальные адреса НЕ через прокси (Neo4j, Ollama)
+            os.environ["NO_PROXY"] = "localhost,127.0.0.1,::1"
+            print(f"🔒 AI через прокси: {proxy_url}")
         else:
-            self.gemini_model = None
+            print("🌐 AI без прокси (используй Groq или VPN)")
 
-        # Приоритеты из .env
-        primary = os.getenv("AI_PRIMARY", "gemini")
-        fallbacks = os.getenv("AI_FALLBACK", "openai,ollama").split(",")
-        self.model_priority = [primary] + [f for f in fallbacks if f != primary]
+        self.timeout = int(os.getenv("AI_TIMEOUT", "30"))
 
+        print(f"🤖 Порядок моделей: {self.model_priority}")
+        self._check_keys()
+
+    def _check_keys(self):
+        """Выводит статус ключей при старте"""
+        print(f"   Gemini:  {'✅' if self.gemini_key  else '❌ нет ключа'}")
+        print(f"   OpenAI:  {'✅' if self.openai_key  else '❌ нет ключа'}")
+
+    # ─────────────────────────────────────────
+    #  GEMINI  (через чистый HTTP, не SDK)
+    # ─────────────────────────────────────────
     def _call_gemini(self, prompt: str, system: str = "") -> str:
-        """Вызов Google Gemini API через официальную библиотеку"""
-        if not self.gemini_model:
-            raise Exception("Gemini not configured")
-        full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        response = self.gemini_model.generate_content(
-            full_prompt,
-            generation_config={"temperature": 0.7, "max_output_tokens": 2048}
-        )
-        return response.text
+        if not self.gemini_key:
+            raise Exception("Gemini: нет API ключа")
 
-    def _call_openai(self, prompt: str, system: str = "") -> str:
-        """Вызов OpenAI API"""
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.openai_key}",
-            "Content-Type": "application/json"
-        }
-        messages = [{"role": "system", "content": system}] if system else []
-        messages.append({"role": "user", "content": prompt})
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+
+        url = (
+            "https://generativelanguage.googleapis.com"
+            "/v1beta/models/gemini-2.0-flash"
+            f":generateContent?key={self.gemini_key}"
+        )
+
         payload = {
-            "model": "gpt-3.5-turbo",
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 2048
+            "contents": [
+                {"parts": [{"text": full_prompt}]}
+            ],
+            "generationConfig": {
+                "temperature":     0.3,
+                "maxOutputTokens": 2048,
+            }
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
 
-    def _call_ollama(self, prompt: str, system: str = "") -> str:
-        """Запрос к локальной Ollama модели — ВНУТРИ КЛАССА!"""
-        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+        resp = self.session.post(url, json=payload, timeout=self.timeout)
 
-        response = requests.post(
-            self.ollama_url,
-            json={
-                "model": self.ollama_model,
-                "prompt": full_prompt,
-                "stream": False,
-                "options": {"temperature": 0.7, "top_p": 0.9}
+        if resp.status_code == 429:
+            raise Exception("Gemini 429: лимит запросов")
+        if resp.status_code == 403:
+            raise Exception("Gemini 403: нет доступа — включи VPN/прокси")
+
+        resp.raise_for_status()
+
+        data = resp.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    # ─────────────────────────────────────────
+    #  OPENAI
+    # ─────────────────────────────────────────
+    def _call_openai(self, prompt: str, system: str = "") -> str:
+        if not self.openai_key:
+            raise Exception("OpenAI: нет API ключа")
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        resp = self.session.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.openai_key}",
+                "Content-Type":  "application/json",
             },
-            timeout=120
+            json={
+                "model":       os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "messages":    messages,
+                "temperature": 0.3,
+                "max_tokens":  2048,
+            },
+            timeout=self.timeout,
         )
 
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("response", "")
-        else:
-            raise Exception(f"Ollama returned {response.status_code}: {response.text[:200]}")
+        if resp.status_code == 401:
+            raise Exception("OpenAI 401: неверный ключ")
+        if resp.status_code == 429:
+            raise Exception("OpenAI 429: лимит или нет баланса")
 
-    def query(self, prompt: str, system: str = "", return_json: bool = False) -> Dict:
-        """Универсальный запрос с fallback-логикой"""
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
+    # ─────────────────────────────────────────
+    #  JSON парсер
+    # ─────────────────────────────────────────
+    def _extract_json(self, content: str) -> dict:
+        if not content or not isinstance(content, str):
+            return {}
+
+        text = content
+
+        # Убираем markdown ```json ... ```
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end   = text.find("```", start)
+            text  = text[start:end].strip()
+        elif "```" in text:
+            start = text.find("```") + 3
+            end   = text.find("```", start)
+            text  = text[start:end].strip()
+
+        # Ищем первый JSON объект или массив
+        for open_c, close_c in [('{', '}'), ('[', ']')]:
+            start = text.find(open_c)
+            end   = text.rfind(close_c)
+            if start != -1 and end != -1 and end > start:
+                try:
+                    return json.loads(text[start:end + 1])
+                except json.JSONDecodeError:
+                    continue
+
+        print(f"⚠️ JSON не найден в ответе: {content[:300]}")
+        return {}
+
+    # ─────────────────────────────────────────
+    #  ГЛАВНЫЙ МЕТОД
+    # ─────────────────────────────────────────
+    def query(
+        self,
+        prompt:      str,
+        system:      str  = "",
+        return_json: bool = False,
+    ) -> dict:
+        """
+        Возвращает:
+          {"success": True,  "data": ..., "model": "gemini"}
+          {"success": False, "error": "...", "data": None}
+        """
         last_error = None
 
         for model in self.model_priority:
             try:
-                if model == "gemini" and self.gemini_model:
-                    print(f"🔹 Using Gemini...")
+                print(f"🤖 Пробуем: {model}")
+
+                if model == "gemini":
                     content = self._call_gemini(prompt, system)
-
-                elif model == "openai" and self.openai_key:
-                    print(f"🔹 Using OpenAI...")
+                elif model == "openai":
                     content = self._call_openai(prompt, system)
-
-                elif model == "ollama":
-                    print(f"🔹 Using Ollama (local)...")
-                    content = self._call_ollama(prompt, system)
-
                 else:
-                    print(f"⚠️ Skipping {model} (not configured)")
+                    print(f"⚠️ Неизвестная модель: {model}")
                     continue
 
-                # Парсинг JSON если нужно
+                # Успех
                 if return_json:
-                    content = self._extract_json(content)
-                    return {"success": True, "data": content, "model": model}
+                    parsed = self._extract_json(content)
+                    if not parsed:
+                        print(f"⚠️ {model}: JSON пустой, пробуем следующую")
+                        continue
+                    return {"success": True, "data": parsed, "model": model}
 
                 return {"success": True, "data": content, "model": model}
 
             except Exception as e:
-                print(f"⚠️ {model} failed: {e}")
+                print(f"❌ {model} ошибка: {e}")
                 last_error = e
                 continue
 
-        # Все модели не сработали
+        # Все модели упали
         return {
             "success": False,
-            "error": str(last_error),
-            "data": None,
-            "model": None
+            "error":   str(last_error) if last_error else "Все модели недоступны",
+            "data":    None,
+            "model":   None,
         }
-
-    def _extract_json(self, content: str) -> Dict:
-        """Извлекает JSON из ответа модели"""
-        import re
-        if "```json" in content:
-            content = content.split("```json")[1]
-        if "```" in content:
-            content = content.split("```")[0]
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            content = json_match.group()
-        return json.loads(content)
 
 
 # Глобальный экземпляр
