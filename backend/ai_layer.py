@@ -1,7 +1,10 @@
 # backend/ai_layer.py
 import os
 import json
+import time
 import requests
+import urllib.request
+import urllib3
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,24 +31,76 @@ class AILayer:
         # Сессия ТОЛЬКО для AI запросов (Neo4j не трогает её)
         self.session = requests.Session()
 
-        use_proxy = os.getenv("USE_PROXY", "false").lower() == "true"
+        # Всегда защищаем localhost от прокси (для Neo4j bolt)
+        os.environ["NO_PROXY"] = "localhost,127.0.0.1,::1"
+        os.environ["no_proxy"] = "localhost,127.0.0.1,::1"
+
+        use_proxy = os.getenv("USE_PROXY", "auto").lower()
         proxy_url = os.getenv("PROXY_URL", "")
 
-        if use_proxy and proxy_url:
-            self.session.proxies = {
-                "http":  proxy_url,
-                "https": proxy_url,
-            }
-            # Локальные адреса — НЕ через прокси
-            os.environ["NO_PROXY"]  = "localhost,127.0.0.1,::1"
-            os.environ["no_proxy"]  = "localhost,127.0.0.1,::1"
-            print(f"🔒 AI через прокси: {proxy_url}")
+        if use_proxy == "true" and proxy_url:
+            # Явно заданный прокси из .env
+            self.session.proxies = {"http": proxy_url, "https": proxy_url}
+            print(f"🔒 AI через прокси из .env: {proxy_url}")
+
+        elif use_proxy == "auto":
+            # Авто-определение системного прокси (Clash, v2ray, Windows IE)
+            detected = self._detect_system_proxy()
+            if detected:
+                self.session.proxies = {"http": detected, "https": detected}
+                print(f"🔒 AI через системный прокси: {detected}")
+            else:
+                print("🌐 AI без прокси (системный прокси не найден)")
+
         else:
             print("🌐 AI без прокси")
 
         self.timeout = int(os.getenv("AI_TIMEOUT", "45"))
+
+        # SSL verification — отключить если VPN перехватывает TLS (SSL_VERIFY=false)
+        ssl_verify_env = os.getenv("SSL_VERIFY", "true").lower()
+        self.ssl_verify = ssl_verify_env != "false"
+        if not self.ssl_verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            print("⚠️  SSL проверка отключена (SSL_VERIFY=false)")
+
         print(f"🤖 Порядок моделей: {self.model_priority}")
         self._check_keys()
+
+    def _detect_system_proxy(self) -> str:
+        """Авто-определение прокси: env vars → Windows registry."""
+        # 1. Env vars (устанавливают Clash, v2ray, Singbox)
+        for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            val = os.environ.get(var, "")
+            if val and "localhost" not in val and "127.0.0.1" not in val:
+                return val
+
+        # 2. Windows registry (IE/Edge прокси — устанавливают некоторые VPN)
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+            ) as key:
+                enabled = winreg.QueryValueEx(key, "ProxyEnable")[0]
+                if enabled:
+                    server = winreg.QueryValueEx(key, "ProxyServer")[0]
+                    if server and "=" not in server:  # формат host:port
+                        return f"http://{server}"
+        except Exception:
+            pass
+
+        # 3. urllib системные прокси (cross-platform)
+        try:
+            proxies = urllib.request.getproxies()
+            for key in ("https", "http"):
+                val = proxies.get(key, "")
+                if val and "localhost" not in val and "127.0.0.1" not in val:
+                    return val
+        except Exception:
+            pass
+
+        return ""
 
     def _check_keys(self):
         print(f"   Gemini:   {'✅' if self.gemini_key   else '❌'}")
@@ -57,13 +112,12 @@ class AILayer:
     # ──────────────────────────────────────────────
     #  GEMINI
     # ──────────────────────────────────────────────
-    def _call_gemini(self, prompt: str, system: str = "") -> str:
+    def _call_gemini_model(self, prompt: str, system: str, model: str) -> str:
+        """Вызов конкретной Gemini модели."""
         if not self.gemini_key:
             raise Exception("Gemini: нет API ключа")
-
-        model   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-        full    = f"{system}\n\n{prompt}" if system else prompt
-        url     = (
+        full = f"{system}\n\n{prompt}" if system else prompt
+        url  = (
             f"https://generativelanguage.googleapis.com"
             f"/v1beta/models/{model}:generateContent?key={self.gemini_key}"
         )
@@ -71,15 +125,27 @@ class AILayer:
             "contents": [{"parts": [{"text": full}]}],
             "generationConfig": {"temperature": 0.3, "maxOutputTokens": 4096},
         }
-
-        resp = self.session.post(url, json=payload, timeout=self.timeout)
+        resp = self.session.post(url, json=payload, timeout=self.timeout, verify=self.ssl_verify)
         if resp.status_code == 429:
-            raise Exception("Gemini 429: лимит запросов")
+            raise Exception(f"Gemini/{model} 429: лимит запросов")
         if resp.status_code == 403:
-            raise Exception("Gemini 403: регион заблокирован — нужен VPN/прокси")
+            raise Exception(f"Gemini/{model} 403: регион заблокирован — нужен VPN/прокси")
         resp.raise_for_status()
-
         return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    def _call_gemini(self, prompt: str, system: str = "") -> str:
+        """Пробует gemini-2.0-flash → gemini-1.5-flash (разные квоты)."""
+        primary = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        try:
+            return self._call_gemini_model(prompt, system, primary)
+        except Exception as e:
+            if "429" in str(e) and primary != "gemini-1.5-flash":
+                print(f"  ↻ {primary} rate-limited, trying gemini-1.5-flash...")
+                return self._call_gemini_model(prompt, system, "gemini-1.5-flash")
+            raise
+
+    def _call_gemini15(self, prompt: str, system: str = "") -> str:
+        return self._call_gemini_model(prompt, system, "gemini-1.5-flash")
 
     # ──────────────────────────────────────────────
     #  OpenAI-совместимый вызов (DeepSeek, Grok, OpenAI)
@@ -101,20 +167,33 @@ class AILayer:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        resp = self.session.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type":  "application/json",
-            },
-            json={
-                "model":       model,
-                "messages":    messages,
-                "temperature": 0.3,
-                "max_tokens":  4096,
-            },
-            timeout=self.timeout,
-        )
+        last_err = None
+        for attempt in range(3):
+            try:
+                resp = self.session.post(
+                    f"{base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type":  "application/json",
+                    },
+                    json={
+                        "model":       model,
+                        "messages":    messages,
+                        "temperature": 0.3,
+                        "max_tokens":  4096,
+                    },
+                    timeout=self.timeout,
+                    verify=self.ssl_verify,
+                )
+                break
+            except (requests.exceptions.SSLError,
+                    requests.exceptions.ConnectionError) as e:
+                last_err = e
+                if attempt < 2:
+                    print(f"  ↻ {label} retry {attempt + 1}/3: {type(e).__name__}")
+                    time.sleep(1.5)
+                    continue
+                raise Exception(f"{label}: ошибка соединения — {e}")
 
         if resp.status_code == 401:
             raise Exception(f"{label} 401: неверный ключ")
@@ -122,18 +201,32 @@ class AILayer:
             raise Exception(f"{label} 429: лимит запросов")
         if not resp.ok:
             raise Exception(f"{label} {resp.status_code}: {resp.text[:300]}")
-        resp.raise_for_status()
 
         return resp.json()["choices"][0]["message"]["content"].strip()
 
     def _call_hf(self, prompt: str, system: str, model_id: str, label: str) -> str:
-        """Hugging Face Inference Router (OpenAI-compatible)"""
+        """HuggingFace: пробуем router → legacy inference endpoint."""
+        # 1. Новый router (более широкий список моделей)
+        try:
+            return self._call_openai_compat(
+                prompt, system,
+                base_url = "https://router.huggingface.co/v1",
+                api_key  = self.hf_key,
+                model    = model_id,
+                label    = label,
+            )
+        except Exception as e:
+            if "404" in str(e) or "model_not" in str(e):
+                raise  # модель не существует — бессмысленно ретраить
+            print(f"  ↻ HF router failed ({e}), trying legacy endpoint...")
+
+        # 2. Legacy endpoint (надёжнее для популярных моделей)
         return self._call_openai_compat(
             prompt, system,
-            base_url = "https://router.huggingface.co/v1",
+            base_url = f"https://api-inference.huggingface.co/models/{model_id}/v1",
             api_key  = self.hf_key,
             model    = model_id,
-            label    = label,
+            label    = f"{label}-legacy",
         )
 
     def _call_deepseek_flash(self, prompt: str, system: str = "") -> str:
@@ -228,6 +321,7 @@ class AILayer:
 
         callers = {
             "gemini":         self._call_gemini,
+            "gemini15":       self._call_gemini15,
             "deepseek_flash": self._call_deepseek_flash,
             "qwen3":          self._call_qwen3,
             "llama4":         self._call_llama4,

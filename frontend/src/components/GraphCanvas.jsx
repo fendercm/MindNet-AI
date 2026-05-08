@@ -34,11 +34,12 @@ const TYPE_ICONS = {
   library:   '📦',
   database:  '🗄️',
   tool:      '🔧',
+  math:      '📐',
   concept:   '💡',
   skill:     '🧠',
 }
 
-const TYPE_ORDER = ['language', 'framework', 'library', 'database', 'tool', 'concept', 'skill']
+const TYPE_ORDER = ['language', 'framework', 'library', 'database', 'tool', 'math', 'concept', 'skill']
 
 // ─── Умный layout: группировка по категориям ─────────────────
 const applySmartLayout = (nodes) => {
@@ -211,6 +212,7 @@ const GraphCanvas = () => {
   const [sidebarOpen,     setSidebarOpen]     = useState(true)
   const [dbStatus,        setDbStatus]        = useState(null)
   const [nodeCount,       setNodeCount]       = useState(0)
+  const [aiPreview,       setAiPreview]       = useState(null)  // навыки без Neo4j
 
   useEffect(() => {
     loadGraph()
@@ -331,6 +333,7 @@ const GraphCanvas = () => {
   const addSkillsFromDescription = async () => {
     if (!descriptionText.trim()) return
     setAddingFromText(true)
+    setAiPreview(null)
     try {
       const resp = await fetch('http://localhost:8000/ai/add-skills/', {
         method:  'POST',
@@ -338,9 +341,22 @@ const GraphCanvas = () => {
         body:    JSON.stringify({ text: descriptionText }),
       })
       const result = await resp.json()
+
       if (result.error) { notify(result.error, false); return }
+
+      const aiFound = result.ai_skills || []
+
+      if (!result.neo4j_available) {
+        // Neo4j недоступен — показываем что AI нашёл, но не сохранено
+        setAiPreview({ skills: aiFound, gaps: result.gaps || [] })
+        setShowPanel(false)
+        notify(`AI нашёл ${aiFound.length} навыков, но Neo4j недоступен — запусти базу данных`, false)
+        return
+      }
+
       await loadGraph()
       setDescriptionText('')
+      setAiPreview(null)
       notify(`Добавлено ${result.skills?.length || 0} навыков`)
     } catch (err) {
       notify('Ошибка: ' + err.message, false)
@@ -788,6 +804,82 @@ const GraphCanvas = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── AI Preview (когда Neo4j недоступен) ── */}
+      {aiPreview && (
+        <div style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 1000,
+          width: 340, maxHeight: 'calc(100vh - 24px)', overflowY: 'auto',
+          background: '#0a0a1a',
+          border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: 12, padding: '20px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          color: '#e2e8f0',
+          animation: 'fadeIn .25s ease',
+        }}>
+          <button onClick={() => setAiPreview(null)} style={{
+            position: 'absolute', top: 12, right: 14,
+            background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer',
+          }}>×</button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ fontWeight: 700, color: '#f87171', fontSize: 13 }}>Neo4j не запущен</div>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Навыки не сохранены, но AI их нашёл</div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Найдено навыков: {aiPreview.skills.length}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
+            {aiPreview.skills.map((s, i) => {
+              const lvl = s.level || 1
+              const col = LEVEL_COLORS[lvl]?.border || '#a78bfa'
+              const icon = TYPE_ICONS[s.category] || '🧠'
+              return (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 10px',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${col}33`,
+                  borderRadius: 8,
+                }}>
+                  <span style={{ fontSize: 14 }}>{icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#f1f5f9' }}>{s.name}</div>
+                    <div style={{ fontSize: 10, color: col }}>{s.category} · L{lvl}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {aiPreview.gaps?.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Рекомендации AI
+              </div>
+              {aiPreview.gaps.slice(0, 3).map((g, i) => (
+                <div key={i} style={{ fontSize: 11, color: '#94a3b8', padding: '4px 0' }}>
+                  💡 {g.skill || g}
+                </div>
+              ))}
+            </>
+          )}
+
+          <div style={{
+            marginTop: 14, padding: '10px 12px',
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            borderRadius: 8, fontSize: 11, color: '#fca5a5', lineHeight: 1.5,
+          }}>
+            Запусти Neo4j Desktop → нажми <strong>Start</strong> на базе данных → добавь навыки снова
+          </div>
         </div>
       )}
 

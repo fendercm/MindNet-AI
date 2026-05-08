@@ -19,25 +19,57 @@ class AIService:
     def decompose_skills(self, user_text: str) -> dict:
         """Превращает текст пользователя в дерево навыков"""
 
-        system_prompt = """Ты — эксперт по анализу навыков разработчика.
-Твоя задача: извлечь из текста навыки, определить их уровень (1-5), 
-категорию, родительский навык (если есть) и связи между ними."""
+        system_prompt = """Ты — эксперт по анализу навыков. Извлекай ВСЕ навыки из текста.
+
+КАТЕГОРИИ (используй только эти):
+- language: языки программирования (Python, JavaScript, C++, SQL, R, MATLAB...)
+- framework: фреймворки (FastAPI, React, Django, aiogram, Spring, PyTorch, TensorFlow...)
+- library: библиотеки (NumPy, Pandas, OpenCV, pytest, requests...)
+- database: базы данных (PostgreSQL, MongoDB, Redis, Neo4j, SQLite...)
+- tool: инструменты (Git, Docker, Linux, VS Code, Jupyter, Postman...)
+- math: математика (Линейная алгебра, Матанализ, Теория вероятностей, Статистика, Дискретная математика, Дифференциальные уравнения, Оптимизация, Численные методы...)
+- concept: концепции и парадигмы (asyncio, ООП, REST API, Алгоритмы, CI/CD, Микросервисы...)
+- skill: прочие навыки (Telegram боты, Веб-скрапинг, ML, Компьютерное зрение...)
+
+ПРАВИЛА РАСШИФРОВКИ СЛЕНГА:
+- "тг бот", "бот в тг", "telegram bot" → Python + aiogram (или python-telegram-bot) + Telegram Bot API
+- "делал сайт" → HTML + CSS + JavaScript (и/или фреймворк)
+- "знаю матан" / "матанализ" → Математический анализ (math)
+- "теорвер" → Теория вероятностей (math)
+- "линал" / "линейная алгебра" → Линейная алгебра (math)
+- "дифуры" → Дифференциальные уравнения (math)
+- "ml", "машинное обучение" → ML, плюс Python, NumPy, sklearn
+- "нейросетки", "нейронки" → Deep Learning + PyTorch или TensorFlow
+
+УРОВНИ:
+- 1=новичок (попробовал, слышал)
+- 2=базовый (делал небольшие проекты)
+- 3=средний (уверенно применяю)
+- 4=продвинутый (глубокие знания)
+- 5=эксперт (веду других)
+
+Принимай текст на ЛЮБОМ языке (русский, английский, сленг).
+Для каждого навыка определяй подходящую категорию. Математика → category "math"."""
 
         example = {
             "skills": [
-                {"name": "Python", "level": 3, "category": "language", "parent": None},
-                {"name": "FastAPI", "level": 2, "category": "framework", "parent": "Python"}
+                {"name": "Python", "level": 2, "category": "language", "parent": None},
+                {"name": "aiogram", "level": 2, "category": "library", "parent": "Python"},
+                {"name": "Telegram Bot API", "level": 2, "category": "framework", "parent": "Python"},
+                {"name": "Линейная алгебра", "level": 3, "category": "math", "parent": None}
             ],
             "connections": [
-                {"from": "FastAPI", "to": "Python", "type": "requires"}
+                {"from": "aiogram", "to": "Python", "type": "requires"},
+                {"from": "Telegram Bot API", "to": "aiogram", "type": "used_with"}
             ],
             "gaps": [
-                {"skill": "pytest", "reason": "Для тестирования API"}
+                {"skill": "asyncio", "reason": "aiogram работает асинхронно"},
+                {"skill": "PostgreSQL", "reason": "для хранения данных бота"}
             ]
         }
 
         prompt = self._make_json_prompt(
-            f"Пользователь сказал: \"{user_text}\"\n\nИзвлеки навыки и связи.",
+            f"Пользователь написал: \"{user_text}\"\n\nИзвлеки ВСЕ навыки, которые можно вывести из этого текста.",
             example
         )
 

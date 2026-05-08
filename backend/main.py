@@ -113,22 +113,43 @@ class TextRequest(BaseModel):
 
 @app.post("/ai/add-skills/")
 def add_skills_from_text(request: TextRequest):
-    """
-    Принимает текст от пользователя, извлекает навыки и сохраняет в базу.
-    """
-    text = request.text  # Берём из body
+    text = request.text
 
-    # 1. Извлекаем навыки через ИИ
+    # 1. AI extraction — always runs regardless of Neo4j status
     decomposition = ai_service.decompose_skills(text)
 
     if "error" in decomposition:
-        return {"error": decomposition["error"]}
+        return {"error": decomposition["error"], "ai_skills": [], "skills": [], "neo4j_available": False}
 
-    skills = decomposition.get("skills", [])
+    skills      = decomposition.get("skills", [])
     connections = decomposition.get("connections", [])
-    gaps = decomposition.get("gaps", [])
+    gaps        = decomposition.get("gaps", [])
 
-    # 2. Сохраняем навыки в базу
+    # Always return what AI found so UI can show it
+    ai_skills = [
+        {
+            "name":     s.get("name", ""),
+            "level":    s.get("level", 1),
+            "category": s.get("category", "skill"),
+        }
+        for s in skills
+    ]
+
+    # 2. If Neo4j is down — return AI result without saving
+    if not db.is_connected():
+        db.reconnect()
+
+    if not db.is_connected():
+        return {
+            "message":         f"AI нашёл {len(skills)} навыков. Neo4j недоступен — навыки не сохранены в граф.",
+            "ai_skills":       ai_skills,
+            "skills":          [],
+            "connections_count": len(connections),
+            "gaps":            gaps,
+            "neo4j_available": False,
+        }
+
+    # 3. Save to Neo4j
     created_nodes = []
     for skill in skills:
         try:
@@ -140,25 +161,19 @@ def add_skills_from_text(request: TextRequest):
             )
             node_dict = dict(node) if not isinstance(node, dict) else node
             created_nodes.append({
-                "id":   node_dict.get("id"),
-                "name": skill["name"],
-                "level": skill.get("level", 1)
+                "id":       node_dict.get("id"),
+                "name":     skill["name"],
+                "level":    skill.get("level", 1),
+                "category": skill.get("category", "skill"),
             })
         except Exception as e:
             print(f"Error creating node {skill['name']}: {e}")
 
-    # 3. Создаём связи
+    # 4. Create edges
     for conn in connections:
         try:
-            from_node = None
-            to_node = None
-
-            for node in created_nodes:
-                if node["name"] == conn["from"]:
-                    from_node = node
-                if node["name"] == conn["to"]:
-                    to_node = node
-
+            from_node = next((n for n in created_nodes if n["name"] == conn["from"]), None)
+            to_node   = next((n for n in created_nodes if n["name"] == conn["to"]),   None)
             if from_node and to_node:
                 crud.create_edge(
                     from_node=from_node["id"],
@@ -169,10 +184,12 @@ def add_skills_from_text(request: TextRequest):
             print(f"Error creating connection: {e}")
 
     return {
-        "message": f"Added {len(created_nodes)} skills",
-        "skills": created_nodes,
+        "message":           f"Добавлено {len(created_nodes)} навыков",
+        "ai_skills":         ai_skills,
+        "skills":            created_nodes,
         "connections_count": len(connections),
-        "gaps": gaps
+        "gaps":              gaps,
+        "neo4j_available":   True,
     }
 @app.post("/ai/generate-project/")
 def generate_project():
