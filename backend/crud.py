@@ -4,6 +4,14 @@ from datetime import datetime
 from database import db
 
 
+def ensure_constraints():
+    """Создаёт уникальный constraint на title (вызывать при старте)."""
+    try:
+        db.query("CREATE CONSTRAINT unique_node_title IF NOT EXISTS FOR (n:KnowledgeNode) REQUIRE n.title IS UNIQUE")
+    except Exception:
+        pass  # старая версия Neo4j — игнорируем
+
+
 def create_node(title: str, description: str,
                 node_type: str, level: int):
     """

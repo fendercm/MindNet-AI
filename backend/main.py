@@ -1,7 +1,12 @@
-from ai_service import AIService
+import sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
+from typing import Optional
 from database import db
 import crud
 from schemas import NodeCreate, EdgeCreate
@@ -10,17 +15,11 @@ from ai_service import AIService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Старт
-    try:
-        db.connect()
-        print("🚀 MindNet AI запущен")
-    except Exception as e:
-        print(f"❌ Не удалось запустить: {e}")
-        raise e
-
+    db.connect()  # мягкий старт — не выбрасывает исключение
+    if db.is_connected():
+        crud.ensure_constraints()
+    print("🚀 MindNet AI запущен")
     yield
-
-    # Завершение
     db.close()
 
 app = FastAPI(title="MindNet AI API", lifespan=lifespan)
@@ -40,6 +39,15 @@ def read_root():
     return {"status": "MindNet AI API is running 🚀"}
 
 
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "neo4j": db.is_connected(),
+        "ai_models": ai_service.ai.model_priority,
+    }
+
+
 @app.post("/nodes/")
 def create_node(node: NodeCreate):
     result = crud.create_node(
@@ -55,7 +63,10 @@ def create_node(node: NodeCreate):
 
 @app.get("/nodes/")
 def list_nodes():
-    return crud.get_all_nodes()
+    try:
+        return crud.get_all_nodes()
+    except Exception:
+        return []
 
 
 @app.post("/edges/")
@@ -96,9 +107,6 @@ def decompose_skills(text: str):
     return result
 
 
-from pydantic import BaseModel  # Добавь в импорты если нет
-
-
 class TextRequest(BaseModel):
     text: str
 
@@ -126,12 +134,13 @@ def add_skills_from_text(request: TextRequest):
         try:
             node = crud.create_node(
                 title=skill["name"],
-                description=f"{skill.get('category', 'skill')} • Level {skill.get('level', 1)}",
-                node_type="skill",
+                description=skill.get("description", ""),
+                node_type=skill.get("category", "skill"),
                 level=skill.get("level", 1)
             )
+            node_dict = dict(node) if not isinstance(node, dict) else node
             created_nodes.append({
-                "id": node.id,
+                "id":   node_dict.get("id"),
                 "name": skill["name"],
                 "level": skill.get("level", 1)
             })
@@ -336,10 +345,6 @@ def suggest_connections():
         return {"error": str(e)}
 
 
-from pydantic import BaseModel
-from typing import Optional
-
-
 class ChatMessage(BaseModel):
     message: str
     context: Optional[str] = None  # Дополнительный контекст от пользователя
@@ -362,7 +367,7 @@ def chat_with_mentor(request: ChatMessage):
         skills_str = ", ".join([f"{s.get('title')} (L{s.get('level', 1)})" for s in skills])
 
         # Получаем связи
-        edges = crud.get_all_edges() if hasattr(crud, 'get_all_edges') else []
+        edges = crud.get_all_edges()
         connections_str = "\n".join(
             [f"- {e.get('from_title')} → {e.get('to_title')} ({e.get('relation_type')})" for e in edges[:10]])
 

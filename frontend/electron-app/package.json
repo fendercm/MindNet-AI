@@ -1,18 +1,66 @@
 {
   "name": "mindnet-ai-desktop",
   "version": "1.0.0",
-  "description": "MindNet AI - Desktop Application",
+  "description": "MindNet AI — граф знаний с AI-ментором",
   "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "dev": "electron .",
-    "pack": "electron-packager . MindNet-AI --platform=win32 --arch=x64 --out=dist --overwrite",
-    "build": "electron-packager . MindNet-AI --platform=win32 --arch=x64 --out=dist --overwrite --icon=icon.ico"
-  },
   "author": "Max",
   "license": "MIT",
+  "scripts": {
+    "start":      "electron .",
+    "build":      "electron-builder --win"
+  },
+  "build": {
+    "appId":       "com.mindnet.ai",
+    "productName": "MindNet AI",
+    "copyright":   "Max",
+
+    "directories": {
+      "output": "release"
+    },
+
+    "files": [
+      "main.js",
+      "icon.png",
+      "icon.ico"
+    ],
+
+    "extraResources": [
+      {
+        "from":   "../dist",
+        "to":     "frontend",
+        "filter": ["**/*"]
+      },
+      {
+        "from":   "../../backend",
+        "to":     "backend",
+        "filter": [
+          "**/*.py",
+          "requirements.txt",
+          ".env",
+          "!__pycache__/**",
+          "!*.pyc",
+          "!venv/**",
+          "!.venv/**",
+          "!dist/**"
+        ]
+      }
+    ],
+
+    "asar": false,
+
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
+
+    "win": {
+      "target": [
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "zip",      "arch": ["x64"] }
+      ]
+    }
+  },
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-packager": "^17.1.2"
+    "electron":         "^28.0.0",
+    "electron-builder": "^24.0.0"
   }
 }
