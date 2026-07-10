@@ -41,3 +41,6 @@ logs/
 
 # Neo4j
 neo4j-data/
+.aider*
+
+.claude/
