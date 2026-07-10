@@ -1,12 +1,17 @@
 # backend/database.py
 from neo4j import GraphDatabase
 import os
+<<<<<<< HEAD
 import socket
+=======
+import time
+>>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
 
 
 class Neo4jConnection:
     def __init__(self):
         self.driver = None
+        self._connected = False
 
     def connect(self):
         uri      = os.getenv("NEO4J_URI",      "bolt://127.0.0.1:7687")
@@ -30,17 +35,40 @@ class Neo4jConnection:
             self.driver = GraphDatabase.driver(
                 uri,
                 auth=(user, password),
-                connection_timeout=10,
+                connection_timeout=5,
                 max_connection_lifetime=3600,
                 encrypted=False,
             )
             self.driver.verify_connectivity()
+<<<<<<< HEAD
             print("✅ Neo4j подключён успешно!")
 
         except Exception as e:
             print(f"❌ Neo4j ошибка: {e}")
             self._print_help(uri)
             raise e
+=======
+            self._connected = True
+            print(f"✅ Neo4j подключён: {uri}")
+
+        except Exception as e:
+            self._connected = False
+            self.driver = None
+            print(f"⚠️  Neo4j недоступен: {e}")
+            print("   Приложение запускается без БД.")
+            print("   Запусти Neo4j Desktop и перезапусти сервер.")
+
+    def is_connected(self) -> bool:
+        return self._connected
+
+    def reconnect(self):
+        if self.driver:
+            try:
+                self.driver.close()
+            except Exception:
+                pass
+        self.connect()
+>>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
 
     def _check_port(self, uri: str):
         """Проверяет TCP доступность порта до подключения"""
@@ -75,16 +103,38 @@ class Neo4jConnection:
         print("="*50 + "\n")
 
     def query(self, query: str, parameters: dict = None):
+<<<<<<< HEAD
         if not self.driver:
             raise Exception("Neo4j не подключён!")
         with self.driver.session() as session:
             result = session.run(query, parameters or {})
             return [record for record in result]
+=======
+        if not self._connected or not self.driver:
+            # Попытка переподключения один раз
+            self.reconnect()
+            if not self._connected:
+                raise Exception("База данных недоступна. Запусти Neo4j Desktop.")
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, parameters or {})
+                return [record for record in result]
+        except Exception as e:
+            self._connected = False
+            raise e
+>>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
 
     def close(self):
         if self.driver:
-            self.driver.close()
+            try:
+                self.driver.close()
+            except Exception:
+                pass
             print("🔌 Neo4j отключён")
 
 
+<<<<<<< HEAD
 db = Neo4jConnection()
+=======
+db = Neo4jConnection()
+>>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
