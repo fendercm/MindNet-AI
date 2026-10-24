@@ -2,33 +2,22 @@ import axios from 'axios'
 
 const API_BASE = 'http://localhost:8000'
 
+const http = axios.create({
+  baseURL: API_BASE,
+  timeout: 90_000,
+})
+
 export const api = {
-  getNodes: async () => {
-    const res = await axios.get(`${API_BASE}/nodes/`)
-    return res.data
-  },
-  createNode: async (node) => {
-    const res = await axios.post(`${API_BASE}/nodes/`, node)
-    return res.data
-  },
-  createEdge: async (edge) => {
-    const res = await axios.post(`${API_BASE}/edges/`, edge)
-    return res.data
-  },
-  getGraph: async () => {
-    const res = await axios.get(`${API_BASE}/graph/`)
-    return res.data
-  },
-  generateProject: async () => {
-    const res = await axios.post(`${API_BASE}/ai/generate-project/`)
-    return res.data
-  },
-  getRecommendations: async () => {
-    const res = await axios.get(`${API_BASE}/ai/recommendations/`)
-    return res.data
-  },
-  clearAll: async () => {
-    const res = await axios.delete(`${API_BASE}/nodes/all/`)
-    return res.data
-  }
+  health: async () => (await http.get('/health')).data,
+  getNodes: async () => (await http.get('/nodes/')).data,
+  createNode: async (node) => (await http.post('/nodes/', node)).data,
+  createEdge: async (edge) => (await http.post('/edges/', edge)).data,
+  getGraph: async () => (await http.get('/graph/')).data,
+  clearAll: async () => (await http.delete('/nodes/all/')).data,
+
+  aiExtractSkills: async (text) => (await http.post('/ai/add-skills/', { text })).data,
+  aiSuggestConnections: async () => (await http.post('/ai/suggest-connections/')).data,
+  aiGenerateProject: async () => (await http.post('/ai/generate-project/')).data,
+  aiRecommendations: async () => (await http.get('/ai/recommendations/')).data,
+  aiChat: async (message) => (await http.post('/ai/chat/', { message })).data,
 }

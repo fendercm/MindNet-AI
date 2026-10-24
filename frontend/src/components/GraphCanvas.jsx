@@ -1,1142 +1,789 @@
 // frontend/src/components/GraphCanvas.jsx
 import ChatPanel from './ChatPanel'
-import React, {
-  useCallback, useState, useEffect, useMemo, useRef,
-} from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, {
-<<<<<<< HEAD
-  addEdge, Background, Controls, MiniMap,
-  useNodesState, useEdgesState, MarkerType, Handle, Position, Panel,
-=======
-  addEdge,
-  Background,
-  Controls,
-  MiniMap,
-  useNodesState,
-  useEdgesState,
-  MarkerType,
-  Handle,
-  Position,
-  Panel,
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+  addEdge, Background, Controls, MiniMap, Panel,
+  useNodesState, useEdgesState, MarkerType, Handle, Position,
+  ReactFlowProvider, useStoreApi,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { api } from '../api/client'
 import { toPng } from 'html-to-image'
 
-<<<<<<< HEAD
-// ─── Tokens ───────────────────────────────────────────────────
-const BG = '#080818'
+/* ─── Вселенная ─────────────────────────────────────────────── */
+const BG = '#05060f'
+const SIDEBAR_W = 292
 
 const CAT = {
-  language:  { color: '#38bdf8', icon: '⌨',  label: 'Language'  },
-  framework: { color: '#f472b6', icon: '⚡',  label: 'Framework' },
-  library:   { color: '#c084fc', icon: '📦', label: 'Library'   },
-  database:  { color: '#fbbf24', icon: '🗄',  label: 'Database'  },
-  tool:      { color: '#34d399', icon: '🔧', label: 'Tool'      },
-  math:      { color: '#fb923c', icon: '📐', label: 'Math'      },
-  concept:   { color: '#818cf8', icon: '💡', label: 'Concept'   },
-  skill:     { color: '#e879f9', icon: '🧠', label: 'Skill'     },
-=======
-// ─── Палитра уровней ──────────────────────────────────────────
-const LEVEL_COLORS = {
-  1: { bg: '#1e2a1e', border: '#4ade80', accent: '#4ade80', label: 'Новичок' },
-  2: { bg: '#1e2630', border: '#60a5fa', accent: '#60a5fa', label: 'Базовый' },
-  3: { bg: '#261e30', border: '#a78bfa', accent: '#a78bfa', label: 'Средний' },
-  4: { bg: '#2a1e24', border: '#f472b6', accent: '#f472b6', label: 'Продвинутый' },
-  5: { bg: '#2a2210', border: '#fbbf24', accent: '#fbbf24', label: 'Эксперт' },
+  language:  { color: '#38bdf8', rgb: '56,189,248',   icon: '⌨',  label: 'Язык'      },
+  framework: { color: '#f472b6', rgb: '244,114,182',  icon: '⚡',  label: 'Фреймворк' },
+  library:   { color: '#a78bfa', rgb: '167,139,250',  icon: '📦', label: 'Библиотека'},
+  database:  { color: '#fbbf24', rgb: '251,191,36',   icon: '🗄',  label: 'База данных'},
+  tool:      { color: '#34d399', rgb: '52,211,153',   icon: '🔧', label: 'Инструмент'},
+  math:      { color: '#fb923c', rgb: '251,146,60',   icon: '📐', label: 'Математика' },
+  concept:   { color: '#818cf8', rgb: '129,140,248',  icon: '💡', label: 'Концепция' },
+  skill:     { color: '#e879f9', rgb: '232,121,249',  icon: '🧠', label: 'Навык'     },
 }
+const CAT_ORDER = ['language', 'framework', 'library', 'database', 'tool', 'math', 'concept', 'skill']
 
-const TYPE_ICONS = {
-  language:  '💻',
-  framework: '⚡',
-  library:   '📦',
-  database:  '🗄️',
-  tool:      '🔧',
-  concept:   '💡',
-  skill:     '🧠',
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-}
-const CAT_ORDER = ['language','framework','library','database','tool','math','concept','skill']
 const EDGE_COLORS = {
-  requires: '#f472b6', extends: '#38bdf8', complements: '#34d399',
-  used_with: '#fbbf24', related_to: '#334155',
+  requires:    '#f472b6',
+  extends:     '#38bdf8',
+  complements: '#34d399',
+  used_with:   '#fbbf24',
+  related_to:  '#64748b',
 }
-const LEVELS = ['','Новичок','Базовый','Средний','Продвинутый','Эксперт']
+const EDGE_LABELS = {
+  requires: 'требует', extends: 'расширяет', complements: 'дополняет',
+  used_with: 'вместе', related_to: 'связано',
+}
 
-<<<<<<< HEAD
-// ─── Layout ───────────────────────────────────────────────────
+const LEVELS = ['', 'Новичок', 'Базовый', 'Средний', 'Продвинутый', 'Эксперт']
+
+/* ─── Разбор узла: тотально всеядный ────────────────────────── */
+const parseNode = (n) => {
+  let level = parseInt(n.level) || 1
+  let node_type = String(n.node_type ?? 'skill').toLowerCase()
+  const desc = n.description != null ? String(n.description) : ''
+  if ((!n.level || n.level === 1) && desc) {
+    const m = desc.match(/Level\s*(\d+)/i)
+    if (m) level = parseInt(m[1])
+    const c = desc.match(/^(language|framework|library|database|tool|math|concept)/i)
+    if (c) node_type = c[1].toLowerCase()
+  }
+  return {
+    level: Math.min(Math.max(level, 1), 5),
+    node_type: CAT_ORDER.includes(node_type) ? node_type : 'skill',
+  }
+}
+
+/* ─── Раскладка: созвездия по категориям ────────────────────── */
+const NW = 170, NH = 104, PX = 18, PY = 18, GX = 110, HEADER_H = 58
+
 const applyLayout = (nodes) => {
-  if (!nodes.length) return nodes
-  const groups = {}
-  CAT_ORDER.forEach(t => { groups[t] = [] })
-=======
-const TYPE_ORDER = ['language', 'framework', 'library', 'database', 'tool', 'concept', 'skill']
-
-// ─── Умный layout: группировка по категориям ─────────────────
-const applySmartLayout = (nodes) => {
-  if (!nodes.length) return nodes
+  if (!nodes.length) return { nodes: [], headers: [], bounds: null }
 
   const groups = {}
-  TYPE_ORDER.forEach(t => { groups[t] = [] })
-
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-  nodes.forEach(n => {
-    const t = n.data.node_type || 'skill'
+  CAT_ORDER.forEach((t) => { groups[t] = [] })
+  nodes.forEach((n) => {
+    const t = n.data.node_type
     if (!groups[t]) groups[t] = []
     groups[t].push(n)
   })
-<<<<<<< HEAD
-  const filled = CAT_ORDER.filter(t => groups[t].length)
-  const NW = 172, NH = 86, PX = 18, PY = 16, GX = 80
-  const result = []; let cx = 0
-  filled.forEach(type => {
+
+  const filled = CAT_ORDER.filter((t) => groups[t].length)
+  const positioned = []
+  const headers = []
+  let cx = 0
+  let maxH = 0
+
+  filled.forEach((type) => {
     const g = groups[type]
-    const cols = Math.max(1, Math.ceil(Math.sqrt(g.length * 1.4)))
-    const gw = cols * (NW + PX) - PX + 40
-    g.forEach((node, i) => result.push({
-      ...node,
-      position: { x: cx + 20 + (i % cols) * (NW + PX), y: 40 + Math.floor(i / cols) * (NH + PY) },
-    }))
-    cx += gw + GX
-=======
+    const cols = Math.max(1, Math.ceil(Math.sqrt(g.length * 1.5)))
+    const rows = Math.ceil(g.length / cols)
+    const gw = cols * (NW + PX) - PX + 44
+    const gh = HEADER_H + rows * (NH + PY) - PY + 20
+    maxH = Math.max(maxH, gh)
 
-  const NON_EMPTY = TYPE_ORDER.filter(t => groups[t].length > 0)
-
-  const NODE_W   = 170
-  const NODE_H   = 72
-  const PAD_X    = 20
-  const PAD_Y    = 20
-  const GROUP_GAP_X = 80
-  const GROUP_GAP_Y = 100
-  const HEADER_H = 36
-
-  const result = []
-  let currentX = 0
-
-  NON_EMPTY.forEach((type) => {
-    const groupNodes = groups[type]
-    const cols  = Math.max(1, Math.ceil(Math.sqrt(groupNodes.length * 1.4)))
-    const rows  = Math.ceil(groupNodes.length / cols)
-
-    const groupW = cols * (NODE_W + PAD_X) - PAD_X + 40
-    const groupH = HEADER_H + rows * (NODE_H + PAD_Y) - PAD_Y + 40
-
-    groupNodes.forEach((node, idx) => {
-      const col = idx % cols
-      const row = Math.floor(idx / cols)
-      result.push({
+    g.forEach((node, i) => {
+      positioned.push({
         ...node,
         position: {
-          x: currentX + 20 + col * (NODE_W + PAD_X),
-          y: HEADER_H + 20 + row * (NODE_H + PAD_Y),
+          x: cx + 22 + (i % cols) * (NW + PX),
+          y: HEADER_H + Math.floor(i / cols) * (NH + PY),
         },
       })
     })
 
-    currentX += groupW + GROUP_GAP_X
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+    headers.push({
+      id: `__hdr_${type}`,
+      type: 'groupLabel',
+      position: { x: cx + 24, y: 16 },
+      data: { catType: type, count: g.length },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      deletable: false,
+      zIndex: -1,
+    })
+
+    cx += gw + GX
   })
-  return result
-}
-
-<<<<<<< HEAD
-const parseNode = (n) => {
-  let level = parseInt(n.level) || 1
-  let node_type = (n.node_type || 'skill').toLowerCase()
-  if ((!n.level || n.level === 1) && n.description) {
-    const m = n.description.match(/Level\s*(\d+)/i); if (m) level = parseInt(m[1])
-    const c = n.description.match(/^(language|framework|library|database|tool|concept)/i)
-    if (c) node_type = c[1].toLowerCase()
-  }
-  return { level: Math.min(Math.max(level, 1), 5), node_type: CAT_ORDER.includes(node_type) ? node_type : 'skill' }
-}
-
-// ─── SkillNode — NO useState, CSS-only hover ──────────────────
-const SkillNode = ({ data, selected }) => {
-  const { level, node_type, title } = data
-  const cat = CAT[node_type] || CAT.skill
-
-  return (
-    <div className={`sn${selected ? ' sn--sel' : ''}`} style={{ '--c': cat.color }}>
-      {/* Top accent line */}
-      <div className="sn__line" />
-      {/* Ambient blob */}
-      <div className="sn__blob" />
-
-      <Handle type="target"   position={Position.Left}  className="sn__handle" style={{ left: -5 }} />
-      <Handle type="source" position={Position.Right} className="sn__handle" style={{ right: -5 }} />
-
-      {/* Category row */}
-      <div className="sn__cat">
-        <span className="sn__icon">{cat.icon}</span>
-        <span className="sn__cat-label">{cat.label}</span>
-        <span className="sn__level-badge">L{level}</span>
-      </div>
-
-      {/* Title */}
-      <div className="sn__title">{title}</div>
-
-      {/* Level bar */}
-      <div className="sn__bar-track">
-        {[1,2,3,4,5].map(i => (
-          <div key={i} className={`sn__bar-seg${i <= level ? ' sn__bar-seg--on' : ''}`} />
-        ))}
-      </div>
-=======
-// ─── Парсим level и node_type из узла ────────────────────────
-const parseNode = (n) => {
-  let level     = parseInt(n.level) || 1
-  let node_type = (n.node_type || 'skill').toLowerCase()
-
-  // Фоллбек: извлекаем из description если level не задан явно
-  if ((!n.level || n.level === 1) && n.description) {
-    const m = n.description.match(/Level\s*(\d+)/i)
-    if (m) level = parseInt(m[1])
-    const catM = n.description.match(/^(language|framework|library|database|tool|concept)/i)
-    if (catM) node_type = catM[1].toLowerCase()
-  }
 
   return {
-    level:     Math.min(Math.max(level, 1), 5),
-    node_type: TYPE_ORDER.includes(node_type) ? node_type : 'skill',
+    nodes: positioned,
+    headers,
+    bounds: { x: -16, y: -12, width: cx - GX + 48, height: maxH + 30 },
   }
 }
 
-// ─── Кастомная нода ───────────────────────────────────────────
+/* ─── Нода знания ───────────────────────────────────────────── */
 const SkillNode = ({ data, selected }) => {
-  const { level, node_type, title } = data
-  const colors = LEVEL_COLORS[level] || LEVEL_COLORS[1]
-  const icon   = TYPE_ICONS[node_type] || '🧠'
-
+  const cat = CAT[data.node_type] || CAT.skill
   return (
-    <div style={{
-      background:   colors.bg,
-      border:       `1.5px solid ${selected ? '#fff' : colors.border}`,
-      borderRadius: 10,
-      padding:      '8px 12px 10px',
-      minWidth:     150,
-      maxWidth:     170,
-      position:     'relative',
-      boxShadow:    selected
-        ? `0 0 0 2px ${colors.border}, 0 4px 20px rgba(0,0,0,0.4)`
-        : '0 2px 8px rgba(0,0,0,0.3)',
-      cursor:       'grab',
-      userSelect:   'none',
-    }}>
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ background: colors.border, width: 8, height: 8, border: 'none' }}
-      />
+    <div
+      className={`kn${selected ? ' kn--sel' : ''}`}
+      style={{ '--c-rgb': cat.rgb }}
+    >
+      <div className="kn__line" />
+      <div className="kn__aura" />
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-        <span style={{ fontSize: 14 }}>{icon}</span>
-        <span style={{ fontSize: 10, color: colors.accent, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          {node_type}
-        </span>
+      <Handle type="target" position={Position.Left} className="kn__handle" style={{ left: -4 }} />
+      <Handle type="source" position={Position.Right} className="kn__handle" style={{ right: -4 }} />
+
+      <div className="kn__cat">
+        <span className="kn__icon">{cat.icon}</span>
+        <span className="kn__cat-label">{cat.label}</span>
+        <span className={`kn__lvl${data.level === 5 ? ' kn__lvl--max' : ''}`}>L{data.level}</span>
       </div>
 
-      <div style={{ fontWeight: 700, color: '#f1f5f9', fontSize: 13, lineHeight: 1.3, wordBreak: 'break-word' }}>
-        {title}
+      <div className="kn__title">{data.title}</div>
+
+      <div className="kn__bars">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className={`kn__bar${i <= data.level ? ' kn__bar--on' : ''}`} />
+        ))}
       </div>
-
-      {/* Полоска уровня снизу */}
-      <div style={{
-        position:     'absolute',
-        bottom:       0, left: 0, right: 0,
-        height:       3,
-        background:   colors.border,
-        borderRadius: '0 0 10px 10px',
-      }} />
-
-      {/* Иконка уровня */}
-      <div style={{
-        position:   'absolute',
-        top:        6, right: 8,
-        fontSize:   10,
-        color:      colors.accent,
-        fontWeight: 800,
-      }}>
-        L{level}
-      </div>
-
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{ background: colors.border, width: 8, height: 8, border: 'none' }}
-      />
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
     </div>
   )
 }
 
-const nodeTypes = { skill: SkillNode }
-
-<<<<<<< HEAD
-// ─── GraphCanvas ──────────────────────────────────────────────
-=======
-// ─── Цвета рёбер по типу связи ────────────────────────────────
-const EDGE_COLORS = {
-  requires:    '#f472b6',
-  extends:     '#60a5fa',
-  complements: '#4ade80',
-  used_with:   '#fbbf24',
-  related_to:  '#94a3b8',
+/* ─── Заголовок созвездия ───────────────────────────────────── */
+const GroupLabelNode = ({ data }) => {
+  const cat = CAT[data.catType] || CAT.skill
+  return (
+    <div className="gh" style={{ '--c-rgb': cat.rgb }}>
+      <span className="gh__label">{cat.label}</span>
+      <span className="gh__rule" />
+      <span className="gh__count">{data.count}</span>
+    </div>
+  )
 }
 
-// ─── Главный компонент ────────────────────────────────────────
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+const nodeTypes = { skill: SkillNode, groupLabel: GroupLabelNode }
+
+/* ─── Логотип-глиф ──────────────────────────────────────────── */
+const Glyph = ({ id }) => (
+  <svg viewBox="0 0 64 64" fill="none" aria-hidden>
+    <defs>
+      <linearGradient id={id} x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stopColor="#22d3ee" />
+        <stop offset=".5" stopColor="#8b5cf6" />
+        <stop offset="1" stopColor="#f472b6" />
+      </linearGradient>
+    </defs>
+    <g stroke={`url(#${id})`} strokeWidth="2.4" strokeLinejoin="round" opacity=".85">
+      <path d="M20 18 L44 24 L46 44 L26 48 Z" />
+      <path d="M20 18 L26 48" opacity=".55" />
+    </g>
+    <g fill={`url(#${id})`}>
+      <circle cx="20" cy="18" r="5" />
+      <circle cx="44" cy="24" r="4.4" />
+      <circle cx="46" cy="44" r="4" />
+      <circle cx="26" cy="48" r="5" />
+    </g>
+  </svg>
+)
+
+/* ─── Пустое состояние: созвездие ───────────────────────────── */
+const VoidArt = () => (
+  <svg className="void__art" viewBox="0 0 240 170" fill="none" aria-hidden>
+    <defs>
+      <linearGradient id="void-g" x1="20" y1="20" x2="220" y2="150" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stopColor="#22d3ee" />
+        <stop offset=".55" stopColor="#8b5cf6" />
+        <stop offset="1" stopColor="#f472b6" />
+      </linearGradient>
+    </defs>
+    <g stroke="url(#void-g)" strokeWidth="1" opacity=".5">
+      <path className="void-link" d="M40 110 L92 64 L150 78 L196 42" />
+      <path className="void-link" d="M92 64 L74 34" style={{ animationDelay: '-1s' }} />
+      <path className="void-link" d="M150 78 L164 126" style={{ animationDelay: '-2s' }} />
+      <path className="void-link" d="M40 110 L164 126" style={{ animationDelay: '-0.5s' }} />
+    </g>
+    {[
+      [40, 110, 4], [92, 64, 5.5], [150, 78, 4.5], [196, 42, 5], [74, 34, 3], [164, 126, 4],
+    ].map(([x, y, r], i) => (
+      <circle
+        key={i}
+        className="void-star"
+        cx={x} cy={y} r={r}
+        fill="url(#void-g)"
+        style={{ animationDelay: `${i * 0.45}s` }}
+      />
+    ))}
+    <circle cx="92" cy="64" r="11" stroke="#8b5cf6" strokeWidth=".7" opacity=".3" />
+    <circle cx="196" cy="42" r="10" stroke="#22d3ee" strokeWidth=".7" opacity=".3" />
+  </svg>
+)
+
+/* ══════════════════════════════════════════════════════════════
+   GraphCanvas
+   ══════════════════════════════════════════════════════════════ */
 const GraphCanvas = () => {
+  const store = useStoreApi()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
-<<<<<<< HEAD
-  const [newTitle,    setNewTitle]    = useState('')
-  const [newType,     setNewType]     = useState('skill')
-  const [newLevel,    setNewLevel]    = useState(1)
-  const [aiText,      setAiText]      = useState('')
-  const [analyzing,   setAnalyzing]   = useState(false)
-  const [chatOpen,    setChatOpen]    = useState(false)
-  const [search,      setSearch]      = useState('')
-  const [filterLvl,   setFilterLvl]   = useState(0)
-  const [filterCat,   setFilterCat]   = useState('all')
-  const [loading,     setLoading]     = useState(false)
-  const [project,     setProject]     = useState(null)
-  const [recs,        setRecs]        = useState([])
-  const [showPanel,   setShowPanel]   = useState(false)
-  const [notif,       setNotif]       = useState(null)
+  const [newTitle, setNewTitle] = useState('')
+  const [newType, setNewType] = useState('skill')
+  const [newLevel, setNewLevel] = useState(1)
+  const [aiText, setAiText] = useState('')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [filterLvl, setFilterLvl] = useState(0)
+  const [filterCat, setFilterCat] = useState('all')
+  const [loading, setLoading] = useState(false)
+  const [project, setProject] = useState(null)
+  const [recs, setRecs] = useState([])
+  const [showPanel, setShowPanel] = useState(false)
+  const [aiPreview, setAiPreview] = useState(null)
+  const [notif, setNotif] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [dbStatus,    setDbStatus]    = useState(null)
-  const [nodeCount,   setNodeCount]   = useState(0)
-  const [aiPreview,   setAiPreview]   = useState(null)
+  const [dbStatus, setDbStatus] = useState(null)
+  const [nodeCount, setNodeCount] = useState(0)
+  const [booting, setBooting] = useState(true)
+  const [epoch, setEpoch] = useState(0)
+  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 })
 
-  useEffect(() => { loadGraph(); checkHealth() }, [])
-=======
-  const [newNodeTitle,    setNewNodeTitle]    = useState('')
-  const [newNodeType,     setNewNodeType]     = useState('skill')
-  const [newNodeLevel,    setNewNodeLevel]    = useState(1)
-  const [descriptionText, setDescriptionText] = useState('')
-  const [chatOpen,        setChatOpen]        = useState(false)
-  const [searchQuery,     setSearchQuery]     = useState('')
-  const [filterLevel,     setFilterLevel]     = useState(0)
-  const [activeCategory,  setActiveCategory]  = useState('all')
-  const [addingFromText,  setAddingFromText]  = useState(false)
-  const [project,         setProject]         = useState(null)
-  const [recommendations, setRecommendations] = useState([])
-  const [loading,         setLoading]         = useState(false)
-  const [showPanel,       setShowPanel]       = useState(false)
-  const [notification,    setNotification]    = useState(null)
-  const [sidebarOpen,     setSidebarOpen]     = useState(true)
-  const [dbStatus,        setDbStatus]        = useState(null)
-  const [nodeCount,       setNodeCount]       = useState(0)
+  const searchRef = useRef(null)
+  const notifTimer = useRef(null)
+  const graphRef = useRef(null)
+  const boundsRef = useRef(null)
+  const assumedRef = useRef(null)
+  const correctedRef = useRef(false)
 
-  useEffect(() => {
-    loadGraph()
-    checkHealth()
+  const notify = useCallback((text, ok = true) => {
+    setNotif({ text, ok, key: Date.now() })
+    clearTimeout(notifTimer.current)
+    notifTimer.current = setTimeout(() => setNotif(null), 3800)
   }, [])
 
-  const checkHealth = async () => {
+  /* Вьюпорт по границам раскладки — не зависит от измерений reactflow */
+  const viewportFor = useCallback((b, cw, ch) => {
+    const pad = 44
+    const zoom = Math.max(0.05, Math.min((cw - pad * 2) / b.width, (ch - pad * 2) / b.height, 1.1))
+    return {
+      x: (cw - b.width * zoom) / 2 - b.x * zoom,
+      y: (ch - b.height * zoom) / 2 - b.y * zoom,
+      zoom,
+    }
+  }, [])
+
+  const checkHealth = useCallback(async () => {
     try {
-      const resp = await fetch('http://localhost:8000/health')
-      const data = await resp.json()
-      setDbStatus(data.neo4j)
+      const d = await api.health()
+      setDbStatus(Boolean(d.neo4j))
     } catch {
       setDbStatus(false)
     }
-  }
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+  }, [])
 
-  const checkHealth = async () => {
-    try { const d = await (await fetch('http://localhost:8000/health')).json(); setDbStatus(d.neo4j) }
-    catch { setDbStatus(false) }
-  }
-
-  const notify = (text, ok = true) => {
-    setNotif({ text, ok })
-    setTimeout(() => setNotif(null), 3500)
-  }
-
-  const loadGraph = async () => {
+  const loadGraph = useCallback(async ({ silent } = {}) => {
     try {
       const data = await api.getGraph()
-<<<<<<< HEAD
-      const fn = (data.nodes || []).map(n => {
+
+      /* Дедупликация узлов по id — API может отдать дубли и мусор */
+      const byId = new Map()
+      for (const n of data.nodes || []) {
+        if (!n || n.id == null) continue
+        const id = String(n.id)
+        if (!byId.has(id)) byId.set(id, n)
+      }
+
+      const fn = [...byId.values()].map((n) => {
         const { level, node_type } = parseNode(n)
-        return { id: String(n.id), type: 'skill', position: { x: 0, y: 0 }, data: { label: n.title, title: n.title, level, node_type } }
-      })
-      const fe = (data.edges || []).map(e => {
-        const c = EDGE_COLORS[e.relation_type] || EDGE_COLORS.related_to
+        const title = (n.title ?? '').toString().trim() || 'Без названия'
         return {
-          id: e.id || `${e.from}-${e.to}`, source: String(e.from), target: String(e.to),
-          label: e.relation_type || '', type: 'smoothstep',
-          animated: e.relation_type === 'requires',
-          style: { stroke: c, strokeWidth: 1.5 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: c, width: 12, height: 12 },
-          labelStyle: { fontSize: 9, fontWeight: 700, fill: c },
-          labelBgPadding: [3, 2], labelBgBorderRadius: 4,
-          labelBgStyle: { fill: BG, fillOpacity: 0.95 },
+          id: String(n.id),
+          type: 'skill',
+          position: { x: 0, y: 0 },
+          data: { label: title, title, level, node_type },
         }
       })
-      const positioned = applyLayout(fn)
-      setNodes(positioned); setEdges(fe); setNodeCount(positioned.length)
-    } catch { notify('Ошибка загрузки', false) }
-  }
 
-  const filteredNodes = useMemo(() => nodes.map(n => ({
-    ...n,
-    hidden:
-      (search && !n.data.title.toLowerCase().includes(search.toLowerCase())) ||
-      (filterLvl > 0 && n.data.level !== filterLvl) ||
-      (filterCat !== 'all' && n.data.node_type !== filterCat),
-  })), [nodes, search, filterLvl, filterCat])
+      /* Рёбра: только между существующими узлами, уникальные id */
+      const known = new Set(fn.map((n) => n.id))
+      const fe = []
+      const edgeIds = new Set()
+      ;(data.edges || []).forEach((e, i) => {
+        if (!e || e.from == null || e.to == null) return
+        const source = String(e.from)
+        const target = String(e.to)
+        if (!known.has(source) || !known.has(target)) return
+        let id = e.id != null ? String(e.id) : `${source}-${target}-${i}`
+        while (edgeIds.has(id)) id += '_'
+        edgeIds.add(id)
+        const rel = e.relation_type || 'related_to'
+        const c = EDGE_COLORS[rel] || EDGE_COLORS.related_to
+        fe.push({
+          id,
+          source,
+          target,
+          label: EDGE_LABELS[rel] || rel,
+          type: 'smoothstep',
+          animated: rel === 'requires',
+          style: { stroke: c, strokeWidth: 1.6, opacity: 0.85 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: c, width: 13, height: 13 },
+          labelStyle: { fontSize: 9, fontWeight: 600, fill: c, fontFamily: 'JetBrains Mono, monospace' },
+          labelBgPadding: [4, 2],
+          labelBgBorderRadius: 4,
+          labelBgStyle: { fill: 'rgba(6,8,20,0.85)' },
+        })
+      })
+      const { nodes: positioned, headers, bounds } = applyLayout(fn)
+      setNodes([...headers, ...positioned])
+      setEdges(fe)
+      setNodeCount(positioned.length)
+
+      // Вьюпорт считаем сами по границам раскладки; канву перемонтируем
+      // через key — defaultViewport применяется d3-зумом при инициализации
+      // и не зависит от ResizeObserver-измерений узлов reactflow.
+      if (bounds) {
+        boundsRef.current = bounds
+        correctedRef.current = false
+        const cw = Math.max(320, window.innerWidth - (sidebarOpen ? SIDEBAR_W : 0))
+        const ch = Math.max(320, window.innerHeight)
+        assumedRef.current = { cw, ch }
+        setViewport(viewportFor(bounds, cw, ch))
+      }
+      setEpoch((e) => e + 1)
+      if (!silent && !dbStatus) notify('Neo4j недоступен — граф пуст', false)
+    } catch {
+      notify('Не удалось загрузить граф — сервер или база спит', false)
+    }
+  }, [dbStatus, notify, setEdges, setNodes, sidebarOpen, viewportFor])
+
+  /* Окно могло быть ещё не развернуто в момент загрузки (webview/Electron):
+     сверяем фактический размер канвы с предположенным и пересчитываем вьюпорт */
+  useEffect(() => {
+    if (epoch === 0 || !boundsRef.current || correctedRef.current) return
+    let ticks = 0
+    const timer = setInterval(() => {
+      ticks += 1
+      const r = graphRef.current?.getBoundingClientRect()
+      const a = assumedRef.current
+      if (r && r.width > 500 && a) {
+        if (Math.abs(r.width - a.cw) > 80 || Math.abs(r.height - a.ch) > 80) {
+          correctedRef.current = true
+          setViewport(viewportFor(boundsRef.current, r.width, r.height))
+          setEpoch((e) => e + 1)
+        }
+        clearInterval(timer)
+      } else if (ticks > 16) {
+        clearInterval(timer)
+      }
+    }, 250)
+    return () => clearInterval(timer)
+  }, [epoch, viewportFor])
+
+  /* Будильник измерений: в средах без постоянного композита (скрытое окно
+     Electron, встроенные webview) ResizeObserver узлов может не сработать —
+     тогда reactflow не измеряет узлы и не рисует рёбра. Измеряем напрямую
+     через экшен стора — в обычных браузерах это безвредный повтор */
+  useEffect(() => {
+    if (epoch === 0) return
+    const wake = () => {
+      try {
+        const { updateNodeDimensions } = store.getState()
+        const updates = [...document.querySelectorAll('.react-flow__node')]
+          .map((el) => ({ id: el.dataset.id, nodeElement: el, forceUpdate: true }))
+        if (updates.length) updateNodeDimensions(updates)
+      } catch { /* мерить нечего — не страшно */ }
+    }
+    const t1 = setTimeout(wake, 450)
+    const t2 = setTimeout(wake, 1600)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [epoch, store])
+
+  /* Первый вход: минимум 900мс космической тишины */
+  useEffect(() => {
+    let alive = true
+    const t0 = Date.now()
+    const boot = async () => {
+      await Promise.all([loadGraph({ silent: true }), checkHealth()])
+      if (!alive) return
+      const wait = Math.max(0, 950 - (Date.now() - t0))
+      setTimeout(() => alive && setBooting(false), wait)
+    }
+    boot()
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /* Ctrl+K — поиск, Esc — закрыть панели */
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSidebarOpen(true)
+        setTimeout(() => searchRef.current?.focus(), 380)
+      }
+      if (e.key === 'Escape') {
+        setChatOpen(false); setShowPanel(false); setAiPreview(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  /* Диммирование вместо сокрытия — граф дышит целиком */
+  const visibleNodes = useMemo(() => nodes.map((n) => {
+    if (n.type === 'groupLabel') {
+      const dimmed = filterCat !== 'all' && n.data.catType !== filterCat
+      return { ...n, className: dimmed ? 'dimmed' : '' }
+    }
+    const d = n.data
+    const dimmed =
+      (search && !d.title.toLowerCase().includes(search.toLowerCase())) ||
+      (filterLvl > 0 && d.level !== filterLvl) ||
+      (filterCat !== 'all' && d.node_type !== filterCat)
+    return { ...n, className: dimmed ? 'dimmed' : '' }
+  }), [nodes, search, filterLvl, filterCat])
 
   const onConnect = useCallback((p) => {
-    const c = EDGE_COLORS.related_to
-    api.createEdge({ from_node: p.source, to_node: p.target, relation_type: 'related_to' })
-    setEdges(eds => addEdge({ ...p, type: 'smoothstep', style: { stroke: c, strokeWidth: 1.5 }, markerEnd: { type: MarkerType.ArrowClosed, color: c } }, eds))
-=======
-      const rawNodes = data.nodes || []
-      const rawEdges = data.edges || []
-
-      const flowNodes = rawNodes.map(n => {
-        const { level, node_type } = parseNode(n)
-        return {
-          id:       String(n.id),
-          type:     'skill',
-          position: { x: 0, y: 0 },
-          data: {
-            label:     n.title,
-            title:     n.title,
-            level,
-            node_type,
-          },
-        }
-      })
-
-      const flowEdges = rawEdges.map(e => {
-        const color = EDGE_COLORS[e.relation_type] || EDGE_COLORS.related_to
-        return {
-          id:       e.id || `${e.from}-${e.to}`,
-          source:   String(e.from),
-          target:   String(e.to),
-          label:    e.relation_type || '',
-          type:     'smoothstep',
-          animated: e.relation_type === 'requires',
-          style:    { stroke: color, strokeWidth: 1.5 },
-          markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
-          labelStyle:        { fontSize: 9, fontWeight: 600, fill: color },
-          labelBgPadding:    [3, 2],
-          labelBgBorderRadius: 3,
-          labelBgStyle:      { fill: '#0f0f23', fillOpacity: 0.9 },
-        }
-      })
-
-      const positioned = applySmartLayout(flowNodes)
-      setNodes(positioned)
-      setEdges(flowEdges)
-      setNodeCount(positioned.length)
-    } catch (err) {
-      console.error('loadGraph error:', err)
-      notify('Ошибка загрузки графа', false)
-    }
-  }
-
-  // ── Фильтрация ────────────────────────────────────────────
-  const filteredNodes = useMemo(() => {
-    return nodes.map(n => {
-      const hidden =
-        (searchQuery && !n.data.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (filterLevel > 0 && n.data.level !== filterLevel) ||
-        (activeCategory !== 'all' && n.data.node_type !== activeCategory)
-      return {
-        ...n,
-        style: { opacity: hidden ? 0.12 : 1, transition: 'opacity .2s' },
-      }
-    })
-  }, [nodes, searchQuery, filterLevel, activeCategory])
-
-  // ── Ручное соединение ─────────────────────────────────────
-  const onConnect = useCallback((params) => {
-    const color = EDGE_COLORS.related_to
-    api.createEdge({ from_node: params.source, to_node: params.target, relation_type: 'related_to' })
-    setEdges(eds => addEdge({
-      ...params,
-      type:      'smoothstep',
-      style:     { stroke: color, strokeWidth: 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, color },
+    setEdges((eds) => addEdge({
+      ...p,
+      type: 'smoothstep',
+      label: EDGE_LABELS.related_to,
+      style: { stroke: EDGE_COLORS.related_to, strokeWidth: 1.6, opacity: 0.85 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLORS.related_to, width: 13, height: 13 },
+      labelStyle: { fontSize: 9, fontWeight: 600, fill: EDGE_COLORS.related_to },
+      labelBgPadding: [4, 2],
+      labelBgBorderRadius: 4,
+      labelBgStyle: { fill: 'rgba(6,8,20,0.85)' },
     }, eds))
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-  }, [setEdges])
+    api.createEdge({ from_node: p.source, to_node: p.target, relation_type: 'related_to' })
+      .then(() => notify('✓ Связь создана'))
+      .catch(() => notify('Связь не сохранилась — проверь базу', false))
+  }, [notify, setEdges])
 
   const addNode = async () => {
-    if (!newTitle.trim()) return
+    const title = newTitle.trim()
+    if (!title) return
     try {
-<<<<<<< HEAD
-      await api.createNode({ title: newTitle.trim(), description: '', node_type: newType, level: newLevel })
-      await loadGraph(); setNewTitle(''); notify(`✓ Добавлен: ${newTitle}`)
-    } catch { notify('Ошибка добавления', false) }
-=======
-      await api.createNode({
-        title:       newNodeTitle.trim(),
-        description: '',
-        node_type:   newNodeType,
-        level:       newNodeLevel,
-      })
-      await loadGraph()
-      setNewNodeTitle('')
-      notify(`Добавлен: ${newNodeTitle}`)
+      await api.createNode({ title, description: '', node_type: newType, level: newLevel })
+      setNewTitle('')
+      await loadGraph({ silent: true })
+      notify(`✓ ${title} теперь в твоей вселенной`)
     } catch {
-      notify('Ошибка добавления', false)
+      notify('Не получилось добавить — Neo4j спит?', false)
     }
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
   }
 
   const addSkills = async () => {
-    if (!aiText.trim()) return
-    setAnalyzing(true); setAiPreview(null)
+    if (!aiText.trim() || analyzing) return
+    setAnalyzing(true)
+    setAiPreview(null)
     try {
-<<<<<<< HEAD
-      const res = await (await fetch('http://localhost:8000/ai/add-skills/', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiText }),
-      })).json()
+      const res = await api.aiExtractSkills(aiText)
       if (res.error) { notify(res.error, false); return }
       if (!res.neo4j_available) {
         setAiPreview({ skills: res.ai_skills || [], gaps: res.gaps || [] })
-        notify(`AI нашёл ${res.ai_skills?.length || 0} навыков — Neo4j недоступен`, false)
+        notify(`AI увидел ${res.ai_skills?.length || 0} навыков, но Neo4j недоступен`, false)
         return
       }
-      await loadGraph(); setAiText(''); notify(`✓ Добавлено ${res.skills?.length || 0} навыков`)
-    } catch (e) { notify(e.message, false)
-    } finally { setAnalyzing(false) }
-=======
-      const resp = await fetch('http://localhost:8000/ai/add-skills/', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ text: descriptionText }),
-      })
-      const result = await resp.json()
-      if (result.error) { notify(result.error, false); return }
-      await loadGraph()
-      setDescriptionText('')
-      notify(`Добавлено ${result.skills?.length || 0} навыков`)
-    } catch (err) {
-      notify('Ошибка: ' + err.message, false)
+      await loadGraph({ silent: true })
+      setAiText('')
+      notify(`✓ Родилось ${res.skills?.length || 0} новых навыков`)
+    } catch (e) {
+      notify(e.message || 'AI молчит', false)
     } finally {
-      setAddingFromText(false)
+      setAnalyzing(false)
     }
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
   }
 
   const suggestLinks = async () => {
     setLoading(true)
     try {
-<<<<<<< HEAD
-      const r = await (await fetch('http://localhost:8000/ai/suggest-connections/', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-      })).json()
+      const r = await api.aiSuggestConnections()
       if (r.error) { notify(r.error, false); return }
-      await loadGraph(); notify(`✓ Создано ${r.created || 0} связей`)
-    } catch (e) { notify(e.message, false)
-    } finally { setLoading(false) }
-=======
-      const resp = await fetch('http://localhost:8000/ai/suggest-connections/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      })
-      const result = await resp.json()
-      if (result.error) { notify(result.error, false); return }
-      await loadGraph()
-      notify(`Создано ${result.created || 0} связей`)
-    } catch (err) {
-      notify(err.message, false)
+      await loadGraph({ silent: true })
+      notify(`✓ Протянуто ${r.created || 0} новых связей`)
+    } catch (e) {
+      notify(e.message || 'AI молчит', false)
     } finally {
       setLoading(false)
     }
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
   }
 
   const genProject = async () => {
     setLoading(true)
-    try { const r = await api.generateProject(); setProject(r); setRecs([]); setShowPanel(true); notify('✓ Проект готов') }
-    catch (e) { notify(e.message, false)
-    } finally { setLoading(false) }
+    try {
+      const r = await api.aiGenerateProject()
+      setProject(r); setRecs([]); setShowPanel(true)
+      notify('✓ Проект готов')
+    } catch (e) {
+      notify(e.message || 'AI молчит', false)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const loadRecs = async () => {
-    try { const r = await api.getRecommendations(); setRecs(r.recommendations || []); setProject(null); setShowPanel(true); notify('✓ Рекомендации готовы') }
-    catch (e) { notify(e.message, false) }
+    try {
+      const r = await api.aiRecommendations()
+      setRecs(r.recommendations || []); setProject(null); setShowPanel(true)
+      notify('✓ Рекомендации готовы')
+    } catch (e) {
+      notify(e.message || 'AI молчит', false)
+    }
   }
 
   const exportPng = async () => {
-    const el = document.querySelector('.react-flow__viewport'); if (!el) return
+    const el = document.querySelector('.react-flow__viewport')
+    if (!el) return
     try {
       const url = await toPng(el, { backgroundColor: BG, quality: 1, pixelRatio: 2 })
-      Object.assign(document.createElement('a'), { download: `mindnet-${new Date().toISOString().slice(0,10)}.png`, href: url }).click()
-      notify('✓ Сохранено')
-    } catch { notify('Ошибка', false) }
+      Object.assign(document.createElement('a'), {
+        download: `mindnet-${new Date().toISOString().slice(0, 10)}.png`,
+        href: url,
+      }).click()
+      notify('✓ Снимок вселенной сохранён')
+    } catch {
+      notify('Экспорт не удался', false)
+    }
   }
 
   const clearAll = async () => {
-    if (!window.confirm('Удалить все данные?')) return
+    if (!window.confirm('Стереть все знания из вселенной? Это необратимо.')) return
     setLoading(true)
     try {
-<<<<<<< HEAD
-      await api.clearAll(); setNodes([]); setEdges([]); setProject(null)
-      setRecs([]); setShowPanel(false); setNodeCount(0); notify('✓ Очищено')
-    } catch (e) { notify(e.message, false)
-    } finally { setLoading(false) }
+      await api.clearAll()
+      setNodes([]); setEdges([]); setProject(null); setRecs([])
+      setShowPanel(false); setNodeCount(0)
+      notify('✓ Вселенная очищена')
+    } catch (e) {
+      notify(e.message || 'Не вышло', false)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const SIDEBAR_W = 276
+  const previewCat = CAT[newType] || CAT.skill
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: BG, fontFamily: "'Inter','SF Pro Display',system-ui,sans-serif", overflow: 'hidden' }}>
-
-      {/* ── Background mesh ── */}
-      <div aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: '-30%', left: '-20%', width: 1000, height: 1000, borderRadius: '50%', background: 'radial-gradient(circle, rgba(88,28,220,0.10) 0%, transparent 60%)', filter: 'blur(60px)' }} />
-        <div style={{ position: 'absolute', bottom: '-25%', right: '-15%', width: 900, height: 900, borderRadius: '50%', background: 'radial-gradient(circle, rgba(14,165,180,0.07) 0%, transparent 60%)', filter: 'blur(60px)' }} />
-        <div style={{ position: 'absolute', top: '30%', right: '25%', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(219,39,119,0.05) 0%, transparent 65%)', filter: 'blur(50px)' }} />
+    <div className="app">
+      {/* ── Космос ── */}
+      <div className="cosmos" aria-hidden>
+        <div className="cosmos__nebula cosmos__nebula--1" />
+        <div className="cosmos__nebula cosmos__nebula--2" />
+        <div className="cosmos__nebula cosmos__nebula--3" />
+        <div className="cosmos__stars cosmos__stars--far" />
+        <div className="cosmos__stars cosmos__stars--near" />
+        <div className="cosmos__comet" />
+        <div className="cosmos__vignette" />
       </div>
 
-      {/* ── Sidebar ── */}
-      <aside style={{
-        position: 'absolute', top: 0, left: 0, bottom: 0, zIndex: 100,
-        width: sidebarOpen ? SIDEBAR_W : 0,
-        overflow: 'hidden',
-        transition: 'width .28s cubic-bezier(.4,0,.2,1)',
-        pointerEvents: sidebarOpen ? 'auto' : 'none',
-      }}>
+      {/* ── Сайдбар ── */}
+      <aside
+        className="rail"
+        style={{ width: sidebarOpen ? SIDEBAR_W : 0, pointerEvents: sidebarOpen ? 'auto' : 'none' }}
+      >
         <div className="sidebar">
-
-          {/* Header */}
           <div className="sidebar__head">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div className="logo-badge">🧠</div>
+            <div className="brand">
+              <div className="brand__mark"><Glyph id="mn-g1" /></div>
               <div>
-                <div className="logo-name">MindNet AI</div>
+                <div className="brand__name">MindNet AI</div>
                 <div className={`db-pill db-pill--${dbStatus === null ? 'wait' : dbStatus ? 'ok' : 'err'}`}>
-                  <span className="db-dot" />
-                  {dbStatus === null ? 'Соединение...' : dbStatus ? `Neo4j · ${nodeCount} навыков` : 'Neo4j недоступен'}
+                  <span className="db-pill__dot" />
+                  {dbStatus === null ? 'соединение…' : dbStatus ? `neo4j · ${nodeCount} знаний` : 'neo4j недоступен'}
                 </div>
               </div>
             </div>
-            <button className="icon-btn" onClick={() => setSidebarOpen(false)} title="Свернуть">‹</button>
+            <button className="icon-btn" onClick={() => setSidebarOpen(false)} title="Свернуть панель">‹</button>
           </div>
 
           <div className="sidebar__body">
-
-            {/* ── Add skill ── */}
-            <section className="card">
-              <div className="card__title">Добавить навык</div>
+            {/* Новый навык */}
+            <section className="section">
+              <div className="section__title">Новый навык</div>
               <input
                 className="field"
                 value={newTitle}
-                onChange={e => setNewTitle(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addNode()}
-                placeholder="Название: Python, Docker, Матанализ..."
+                onChange={(e) => setNewTitle(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addNode()}
+                placeholder="Python, Docker, матанализ…"
               />
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <select className="field" style={{ flex: 1 }} value={newType} onChange={e => setNewType(e.target.value)}>
-                  {CAT_ORDER.map(t => <option key={t} value={t}>{CAT[t].icon} {CAT[t].label}</option>)}
+              <div className="field-row">
+                <select className="field" style={{ flex: 1 }} value={newType} onChange={(e) => setNewType(e.target.value)}>
+                  {CAT_ORDER.map((t) => <option key={t} value={t}>{CAT[t].icon} {CAT[t].label}</option>)}
                 </select>
-                <select className="field" style={{ width: 68 }} value={newLevel} onChange={e => setNewLevel(Number(e.target.value))}>
-                  {[1,2,3,4,5].map(l => <option key={l} value={l}>L{l}</option>)}
+                <select className="field" style={{ width: 70 }} value={newLevel} onChange={(e) => setNewLevel(Number(e.target.value))}>
+                  {[1, 2, 3, 4, 5].map((l) => <option key={l} value={l}>L{l}</option>)}
                 </select>
               </div>
-              {/* Live preview */}
-              <div className="level-preview" style={{ '--c': CAT[newType]?.color || '#a78bfa' }}>
-                <span className="level-preview__icon">{CAT[newType]?.icon}</span>
-                <span className="level-preview__cat">{CAT[newType]?.label}</span>
-                <div className="level-preview__bars">
-                  {[1,2,3,4,5].map(i => <div key={i} className={`lp-bar${i <= newLevel ? ' lp-bar--on' : ''}`} />)}
+              <div className="preview" style={{ '--c-rgb': previewCat.rgb }}>
+                <span className="preview__icon">{previewCat.icon}</span>
+                <span className="preview__cat">{previewCat.label}</span>
+                <div className="preview__bars">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className={`pv-bar${i <= newLevel ? ' pv-bar--on' : ''}`} />
+                  ))}
                 </div>
-                <span className="level-preview__lbl">{LEVELS[newLevel]}</span>
+                <span className="preview__lvl">{LEVELS[newLevel]}</span>
               </div>
-              <button className="btn btn--primary" onClick={addNode}>＋ Добавить</button>
+              <button className="btn btn--primary" style={{ marginTop: 9 }} onClick={addNode}>＋ Добавить в граф</button>
             </section>
 
-            <div className="divider" />
-
-            {/* ── AI analysis ── */}
-            <section className="card">
-              <div className="card__title">AI Анализ навыков</div>
+            {/* AI-анализ */}
+            <section className="section">
+              <div className="section__title">AI-анализ</div>
               <textarea
                 className="field"
                 rows={4}
                 value={aiText}
-                onChange={e => setAiText(e.target.value)}
-                placeholder="Опиши свой опыт или стек — AI сам извлечёт навыки и уровень..."
+                onChange={(e) => setAiText(e.target.value)}
+                placeholder="Расскажи о своём опыте и стеке — AI сам извлечёт навыки и оценит уровень…"
                 disabled={analyzing}
-                style={{ resize: 'vertical', lineHeight: 1.6 }}
               />
-              <button className="btn btn--ai" onClick={addSkills} disabled={analyzing}>
-                {analyzing ? <><span className="spinner" /> Анализирую...</> : <>✦ Извлечь навыки AI</>}
+              <button className="btn btn--ai" style={{ marginTop: 8 }} onClick={addSkills} disabled={analyzing}>
+                {analyzing
+                  ? <><span className="spinner" /> Читаю между строк…</>
+                  : <>✦ Извлечь навыки</>}
               </button>
             </section>
 
-            <div className="divider" />
-
-            {/* ── AI Tools ── */}
-            <section className="card">
-              <div className="card__title">AI Инструменты</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <button className="btn btn--tool" style={{ '--tc': '#fbbf24' }} onClick={suggestLinks}  disabled={loading}>⟡ Авто-связи</button>
-                <button className="btn btn--tool" style={{ '--tc': '#34d399' }} onClick={genProject}    disabled={loading}>◈ Генерировать проект</button>
-                <button className="btn btn--tool" style={{ '--tc': '#818cf8' }} onClick={loadRecs}>◉ Рекомендации</button>
-              </div>
+            {/* AI-инструменты */}
+            <section className="section">
+              <div className="section__title">AI-инструменты</div>
+              <button className="btn btn--tool" style={{ '--tc-rgb': '251,191,36' }} onClick={suggestLinks} disabled={loading}>⟡ Авто-связи</button>
+              <button className="btn btn--tool" style={{ '--tc-rgb': '52,211,153' }} onClick={genProject} disabled={loading}>◈ Сгенерировать проект</button>
+              <button className="btn btn--tool" style={{ '--tc-rgb': '129,140,248' }} onClick={loadRecs}>◉ Что учить дальше</button>
             </section>
 
-            <div className="divider" />
-
-            {/* ── Filters ── */}
-            <section className="card">
-              <div className="card__title">Фильтры</div>
-              <input className="field" value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Поиск по названию..." />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
-                {[0,1,2,3,4,5].map(l => (
-                  <button key={l} className={`chip${filterLvl === l ? ' chip--on' : ''}`} style={{ '--cc': '#a78bfa' }} onClick={() => setFilterLvl(l)}>
-                    {l === 0 ? 'Все уровни' : `L${l}`}
+            {/* Фильтры */}
+            <section className="section">
+              <div className="section__title">Фильтры</div>
+              <input
+                ref={searchRef}
+                className="field"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Поиск по названию…   (Ctrl+K)"
+              />
+              <div className="chips">
+                {[0, 1, 2, 3, 4, 5].map((l) => (
+                  <button
+                    key={l}
+                    className={`chip${filterLvl === l ? ' chip--on' : ''}`}
+                    style={{ '--cc-rgb': l === 0 ? '148,163,214' : CAT.concept.rgb }}
+                    onClick={() => setFilterLvl(l)}
+                  >
+                    {l === 0 ? 'все' : `L${l}`}
                   </button>
                 ))}
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 6 }}>
-                <button className={`chip${filterCat === 'all' ? ' chip--on' : ''}`} style={{ '--cc': '#94a3b8' }} onClick={() => setFilterCat('all')}>Все</button>
-                {CAT_ORDER.map(t => (
-                  <button key={t} className={`chip${filterCat === t ? ' chip--on' : ''}`} style={{ '--cc': CAT[t].color }} onClick={() => setFilterCat(t)}>
+              <div className="chips">
+                <button
+                  className={`chip${filterCat === 'all' ? ' chip--on' : ''}`}
+                  style={{ '--cc-rgb': '148,163,214' }}
+                  onClick={() => setFilterCat('all')}
+                >
+                  всё
+                </button>
+                {CAT_ORDER.map((t) => (
+                  <button
+                    key={t}
+                    className={`chip chip-icon${filterCat === t ? ' chip--on' : ''}`}
+                    style={{ '--cc-rgb': CAT[t].rgb }}
+                    title={CAT[t].label}
+                    onClick={() => setFilterCat(t)}
+                  >
                     {CAT[t].icon}
                   </button>
                 ))}
               </div>
               {(search || filterLvl > 0 || filterCat !== 'all') && (
-                <button className="btn btn--ghost" style={{ marginTop: 8 }} onClick={() => { setSearch(''); setFilterLvl(0); setFilterCat('all') }}>
-                  ↺ Сбросить фильтры
+                <button
+                  className="btn btn--ghost"
+                  style={{ marginTop: 8 }}
+                  onClick={() => { setSearch(''); setFilterLvl(0); setFilterCat('all') }}
+                >
+                  ↺ Показать всё
                 </button>
               )}
             </section>
 
-            <div className="divider" />
-
-            {/* ── Actions ── */}
-            <section className="card">
-              <div className="card__title">Действия</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn--ghost" style={{ flex: 1 }} onClick={exportPng}>⬇ PNG</button>
-                <button className="btn btn--ghost" style={{ flex: 1 }} onClick={() => { loadGraph(); notify('✓ Обновлено') }}>↻ Обновить</button>
+            {/* Действия */}
+            <section className="section">
+              <div className="section__title">Действия</div>
+              <div style={{ display: 'flex', gap: 7 }}>
+                <button className="btn btn--ghost" onClick={exportPng}>⬇ PNG</button>
+                <button
+                  className="btn btn--ghost"
+                  onClick={() => { loadGraph({ silent: true }); checkHealth(); notify('✓ Обновлено') }}
+                >
+                  ↻ Обновить
+                </button>
               </div>
-              <button className="btn btn--danger" style={{ marginTop: 8 }} onClick={clearAll} disabled={loading}>✕ Очистить всё</button>
+              <button className="btn btn--danger" onClick={clearAll} disabled={loading}>✕ Стереть вселенную</button>
             </section>
-
           </div>
 
-          {/* Chat button */}
           <div className="sidebar__foot">
             <button className="chat-btn" onClick={() => setChatOpen(true)}>
-              <span style={{ fontSize: 17 }}>💬</span> Чат с ментором
+              <span className="chat-btn__dot" /> Чат с ментором
             </button>
           </div>
         </div>
       </aside>
 
-      {/* ── Sidebar toggle (when closed) ── */}
+      {/* ── Кнопка раскрытия ── */}
       {!sidebarOpen && (
-        <button
-          className="open-btn"
-          onClick={() => setSidebarOpen(true)}
-          title="Открыть панель"
-        >
-          🧠
+        <button className="rail-btn" onClick={() => setSidebarOpen(true)} title="Открыть панель">
+          <Glyph id="mn-g2" />
         </button>
       )}
 
-      {/* ── Graph — takes remaining space ── */}
-      <div style={{
-        position: 'absolute',
-        top: 0, bottom: 0,
-        left: sidebarOpen ? SIDEBAR_W : 0,
-        right: 0,
-        transition: 'left .28s cubic-bezier(.4,0,.2,1)',
-        zIndex: 1,
-      }}>
-        <ReactFlow
-          nodes={filteredNodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          minZoom={0.04}
-          maxZoom={5}
-          deleteKeyCode="Delete"
-          style={{ width: '100%', height: '100%' }}
-        >
-          <Background color="rgba(148,163,184,0.035)" gap={32} size={1} />
-          <Controls
-            style={{
-              background: 'rgba(8,8,24,0.8)',
-              backdropFilter: 'blur(16px)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 12,
-              boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
-            }}
-          />
-          <MiniMap
-            nodeColor={n => CAT[n.data?.node_type]?.color || '#818cf8'}
-            maskColor="rgba(8,8,24,0.8)"
-            style={{
-              background: 'rgba(8,8,24,0.8)',
-              backdropFilter: 'blur(16px)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 12,
-              boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
-            }}
-          />
-          <Panel position="bottom-center">
-            <div className="legend">
-              {[1,2,3,4,5].map(l => (
-                <div key={l} className="legend__item">
-                  <span className="legend__dot" style={{ background: `hsl(${195 + l * 38},80%,62%)`, boxShadow: `0 0 6px hsl(${195 + l * 38},80%,62%)` }} />
-                  <span>{LEVELS[l]}</span>
-                </div>
-              ))}
-=======
-      const result = await api.generateProject()
-      setProject(result)
-      setRecommendations([])
-      setShowPanel(true)
-      notify('Проект сгенерирован!')
-    } catch (err) {
-      notify(err.message, false)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Рекомендации ──────────────────────────────────────────
-  const loadRecommendations = async () => {
-    try {
-      const result = await api.getRecommendations()
-      setRecommendations(result.recommendations || [])
-      setProject(null)
-      setShowPanel(true)
-      notify('Рекомендации готовы!')
-    } catch (err) {
-      notify(err.message, false)
-    }
-  }
-
-  // ── Экспорт ───────────────────────────────────────────────
-  const exportGraph = async () => {
-    const el = document.querySelector('.react-flow__viewport')
-    if (!el) return
-    try {
-      const url = await toPng(el, { backgroundColor: '#0f0f23', quality: 1, pixelRatio: 2 })
-      const a = document.createElement('a')
-      a.download = `mindnet-${new Date().toISOString().slice(0, 10)}.png`
-      a.href = url
-      a.click()
-      notify('Граф сохранён!')
-    } catch {
-      notify('Ошибка экспорта', false)
-    }
-  }
-
-  // ── Очистить ──────────────────────────────────────────────
-  const clearBoard = async () => {
-    if (!window.confirm('Удалить ВСЕ узлы и связи?')) return
-    setLoading(true)
-    try {
-      await api.clearAll()
-      setNodes([])
-      setEdges([])
-      setProject(null)
-      setRecommendations([])
-      setShowPanel(false)
-      setNodeCount(0)
-      notify('Доска очищена!')
-    } catch (err) {
-      notify(err.message, false)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────
-  //  РЕНДЕР
-  // ─────────────────────────────────────────────────────────
-  return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', background: '#0f0f23', fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
-
-      {/* ── Уведомление ── */}
-      {notification && (
-        <div style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-          background:   notification.ok ? '#052e16' : '#450a0a',
-          border:       `1px solid ${notification.ok ? '#4ade80' : '#ef4444'}`,
-          color:        notification.ok ? '#4ade80' : '#ef4444',
-          padding:      '10px 18px', borderRadius: 10, fontWeight: 600, fontSize: 13,
-          boxShadow:    '0 4px 20px rgba(0,0,0,0.5)',
-          animation:    'fadeIn .25s ease',
-        }}>
-          {notification.text}
-        </div>
-      )}
-
-      {/* ── Левый сайдбар ── */}
-      <div style={{
-        width:      sidebarOpen ? 280 : 52,
-        minWidth:   sidebarOpen ? 280 : 52,
-        height:     '100vh',
-        background: '#0a0a1a',
-        borderRight:'1px solid rgba(255,255,255,0.06)',
-        display:    'flex',
-        flexDirection: 'column',
-        transition: 'width .2s, min-width .2s',
-        overflow:   'hidden',
-        zIndex:     100,
-      }}>
-
-        {/* Шапка */}
-        <div style={{
-          padding:    '16px 12px',
-          display:    'flex',
-          alignItems: 'center',
-          justifyContent: sidebarOpen ? 'space-between' : 'center',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          flexShrink: 0,
-        }}>
-          {sidebarOpen && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 20 }}>🧠</span>
-              <span style={{ fontWeight: 800, color: '#a78bfa', fontSize: 15, letterSpacing: '-0.3px' }}>MindNet AI</span>
+      {/* ── Граф ── */}
+      <div ref={graphRef} className="app__graph" style={{ left: sidebarOpen ? SIDEBAR_W : 0 }}>
+        {nodeCount === 0 && !booting && (
+          <div className="void">
+            <VoidArt />
+            <h2 className="void__title">Твой разум пока пуст</h2>
+            <p className="void__sub">
+              Добавь первый навык слева или доверься <b>AI-анализу</b> — опиши свой опыт,
+              и созвездие знаний соберётся само.
+            </p>
+            <div className="void__hint">
+              <kbd>Ctrl</kbd><kbd>K</kbd> поиск · тяни от узла к узлу, чтобы связать
             </div>
-          )}
-          <button
-            onClick={() => setSidebarOpen(v => !v)}
-            style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 18, padding: 2 }}
-          >
-            {sidebarOpen ? '◀' : '▶'}
-          </button>
-        </div>
-
-        {sidebarOpen && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 0', display: 'flex', flexDirection: 'column', gap: 1 }}>
-
-            {/* Статус БД */}
-            <div style={{ padding: '6px 16px', marginBottom: 4 }}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                fontSize: 11, color: dbStatus === null ? '#64748b' : dbStatus ? '#4ade80' : '#ef4444',
-              }}>
-                <span style={{
-                  width: 7, height: 7, borderRadius: '50%',
-                  background: dbStatus === null ? '#64748b' : dbStatus ? '#4ade80' : '#ef4444',
-                  flexShrink: 0,
-                }} />
-                {dbStatus === null ? 'Проверка...' : dbStatus ? `Neo4j подключён · ${nodeCount} узлов` : 'Neo4j недоступен'}
-              </div>
-            </div>
-
-            {/* Секция: Добавить навык */}
-            <Section title="Добавить навык">
-              <input
-                value={newNodeTitle}
-                onChange={e => setNewNodeTitle(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addNode()}
-                placeholder="Название навыка"
-                style={iStyle}
-              />
-              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <select value={newNodeType} onChange={e => setNewNodeType(e.target.value)} style={{ ...iStyle, flex: 1 }}>
-                  {TYPE_ORDER.map(t => <option key={t} value={t}>{TYPE_ICONS[t]} {t}</option>)}
-                </select>
-                <select value={newNodeLevel} onChange={e => setNewNodeLevel(Number(e.target.value))} style={{ ...iStyle, width: 56 }}>
-                  {[1,2,3,4,5].map(l => <option key={l} value={l}>L{l}</option>)}
-                </select>
-              </div>
-              <SBtn onClick={addNode} color="#6c63ff" style={{ marginTop: 6, width: '100%' }}>
-                + Добавить
-              </SBtn>
-            </Section>
-
-            {/* Секция: AI Анализ */}
-            <Section title="AI Анализ">
-              <textarea
-                value={descriptionText}
-                onChange={e => setDescriptionText(e.target.value)}
-                placeholder="Опиши проект или технологии — AI извлечёт навыки..."
-                disabled={addingFromText}
-                rows={3}
-                style={{ ...iStyle, resize: 'none', width: '100%', boxSizing: 'border-box' }}
-              />
-              <SBtn
-                onClick={addSkillsFromDescription}
-                disabled={addingFromText}
-                color="#9333ea"
-                style={{ marginTop: 6, width: '100%' }}
-              >
-                {addingFromText ? '⏳ Анализирую...' : '✨ Извлечь навыки'}
-              </SBtn>
-            </Section>
-
-            {/* Секция: Поиск и фильтры */}
-            <Section title="Фильтры">
-              <input
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="🔍 Поиск..."
-                style={iStyle}
-              />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
-                {[0,1,2,3,4,5].map(l => (
-                  <FilterChip
-                    key={l}
-                    label={l === 0 ? 'Все' : `L${l}`}
-                    active={filterLevel === l}
-                    color={l === 0 ? '#64748b' : (LEVEL_COLORS[l]?.border || '#64748b')}
-                    onClick={() => setFilterLevel(l)}
-                  />
-                ))}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-                <FilterChip label="Все" active={activeCategory === 'all'} color="#64748b" onClick={() => setActiveCategory('all')} />
-                {TYPE_ORDER.map(t => (
-                  <FilterChip
-                    key={t}
-                    label={TYPE_ICONS[t]}
-                    active={activeCategory === t}
-                    color="#a78bfa"
-                    title={t}
-                    onClick={() => setActiveCategory(t)}
-                  />
-                ))}
-              </div>
-              {(searchQuery || filterLevel > 0 || activeCategory !== 'all') && (
-                <SBtn
-                  onClick={() => { setSearchQuery(''); setFilterLevel(0); setActiveCategory('all') }}
-                  color="#64748b"
-                  style={{ marginTop: 6, width: '100%', fontSize: 11 }}
-                >
-                  Сбросить фильтры
-                </SBtn>
-              )}
-            </Section>
-
-            {/* Секция: AI Инструменты */}
-            <Section title="AI Инструменты">
-              <SBtn onClick={suggestConnections} disabled={loading} color="#f59e0b" style={{ width: '100%', marginBottom: 6 }}>
-                🔗 Авто-связи
-              </SBtn>
-              <SBtn onClick={generateProject}    disabled={loading} color="#10b981" style={{ width: '100%', marginBottom: 6 }}>
-                🎯 Генерировать проект
-              </SBtn>
-              <SBtn onClick={loadRecommendations} color="#3b82f6" style={{ width: '100%' }}>
-                💡 Рекомендации
-              </SBtn>
-            </Section>
-
-            {/* Секция: Действия */}
-            <Section title="Действия">
-              <SBtn onClick={exportGraph} color="#0891b2" style={{ width: '100%', marginBottom: 6 }}>
-                📸 Экспорт PNG
-              </SBtn>
-              <SBtn onClick={clearBoard} disabled={loading} color="#dc2626" style={{ width: '100%' }}>
-                🗑️ Очистить всё
-              </SBtn>
-            </Section>
-
-            {loading && (
-              <div style={{ padding: '8px 16px', color: '#a78bfa', fontSize: 12, textAlign: 'center' }}>
-                ⏳ Загрузка...
-              </div>
-            )}
-
           </div>
         )}
 
-        {/* Кнопка чата снизу */}
-        <div style={{
-          padding:     '12px',
-          borderTop:   '1px solid rgba(255,255,255,0.06)',
-          flexShrink:  0,
-        }}>
-          <button
-            onClick={() => setChatOpen(true)}
-            title="Открыть чат с ментором"
-            style={{
-              width:        '100%',
-              padding:      '9px',
-              background:   'rgba(239,68,68,0.15)',
-              border:       '1px solid rgba(239,68,68,0.3)',
-              borderRadius: 8,
-              color:        '#f87171',
-              fontWeight:   600,
-              fontSize:     sidebarOpen ? 13 : 18,
-              cursor:       'pointer',
-              display:      'flex',
-              alignItems:   'center',
-              justifyContent: 'center',
-              gap:          6,
-            }}
-          >
-            💬 {sidebarOpen && 'Чат с ментором'}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Граф ── */}
-      <div style={{ flex: 1, position: 'relative' }}>
         <ReactFlow
-          nodes={filteredNodes}
+          key={epoch}
+          nodes={visibleNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          fitView
-          fitViewOptions={{ padding: 0.12 }}
+          connectionLineType="smoothstep"
+          connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 1.6, strokeDasharray: '5 4' }}
+          defaultViewport={viewport}
           minZoom={0.05}
           maxZoom={4}
-          deleteKeyCode="Delete"
+          style={{ width: '100%', height: '100%' }}
         >
-          <Background color="rgba(167,139,250,0.06)" gap={30} />
-          <Controls
-            style={{
-              background:   'rgba(10,10,26,0.9)',
-              border:       '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 10,
-            }}
-          />
+          <Background color="rgba(148,163,214,0.05)" gap={34} size={1} />
+          <Controls showInteractive={false} />
           <MiniMap
-            nodeColor={n => LEVEL_COLORS[n.data?.level]?.border || '#a78bfa'}
-            maskColor="rgba(10,10,26,0.7)"
-            style={{
-              background:   'rgba(10,10,26,0.9)',
-              border:       '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 10,
-            }}
+            pannable
+            zoomable
+            nodeColor={(n) => (n.type === 'groupLabel' ? 'rgba(148,163,214,0.15)' : (CAT[n.data?.node_type]?.color || '#818cf8'))}
+            nodeStrokeWidth={0}
+            maskColor="rgba(3,4,12,0.72)"
           />
-
-          {/* Легенда уровней */}
-          <Panel position="bottom-left">
-            <div style={{
-              background:   'rgba(10,10,26,0.85)',
-              border:       '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 10,
-              padding:      '8px 12px',
-              display:      'flex',
-              gap:          10,
-              fontSize:     11,
-              color:        '#64748b',
-            }}>
-              {[1,2,3,4,5].map(l => (
-                <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: LEVEL_COLORS[l].border }} />
-                  <span style={{ color: LEVEL_COLORS[l].border }}>{LEVEL_COLORS[l].label}</span>
+          <Panel position="bottom-center">
+            <div className="legend">
+              {Object.entries(EDGE_COLORS).map(([rel, color]) => (
+                <div key={rel} className="legend__item">
+                  <span className="legend__dot" style={{ background: color, boxShadow: `0 0 7px ${color}` }} />
+                  <span>{EDGE_LABELS[rel]}</span>
                 </div>
               ))}
             </div>
@@ -1144,124 +791,48 @@ const GraphCanvas = () => {
         </ReactFlow>
       </div>
 
-      {/* ── Чат ── */}
-      {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
-
-      {/* ── Боковая панель результатов ── */}
-      {showPanel && (
-        <div style={{
-          position:   'absolute',
-          top: 12, right: 12,
-          zIndex:     1000,
-          width:      340,
-          maxHeight:  'calc(100vh - 24px)',
-          overflowY:  'auto',
-          background: '#0a0a1a',
-          border:     '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 12,
-          padding:    '20px',
-          boxShadow:  '0 8px 32px rgba(0,0,0,0.6)',
-          color:      '#e2e8f0',
-        }}>
-          <button
-            onClick={() => setShowPanel(false)}
-            style={{
-              position: 'absolute', top: 12, right: 14,
-              background: 'none', border: 'none',
-              color: '#64748b', fontSize: 20, cursor: 'pointer',
-            }}
-          >×</button>
-
-          {project && (
-            <div>
-              <h3 style={{ color: '#10b981', marginTop: 0, fontSize: 14, fontWeight: 700 }}>🎯 Проект</h3>
-              <h4 style={{ color: '#f1f5f9', margin: '8px 0', fontSize: 15 }}>{project.title}</h4>
-              <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6 }}>{project.description}</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
-                {project.technologies?.map((t, i) => (
-                  <span key={i} style={{
-                    background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.3)',
-                    borderRadius: 6, padding: '2px 8px', fontSize: 11, color: '#a78bfa',
-                  }}>{t}</span>
-                ))}
-              </div>
-              <p style={{ fontSize: 12, color: '#475569', marginTop: 10 }}>
-                ⏱ ~{project.estimated_hours} ч · {project.difficulty}
-              </p>
-              {project.learning_goals?.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 10, marginBottom: 4 }}>Цели обучения:</div>
-                  <ul style={{ paddingLeft: 16, margin: 0 }}>
-                    {project.learning_goals.map((g, i) => (
-                      <li key={i} style={{ fontSize: 12, color: '#94a3b8', marginBottom: 2 }}>{g}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          {recommendations.length > 0 && (
-            <div>
-              <h3 style={{ color: '#3b82f6', marginTop: 0, fontSize: 14, fontWeight: 700 }}>💡 Рекомендации</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {recommendations.map((r, i) => (
-                  <div key={i} style={{
-                    padding: '8px 12px',
-                    background: 'rgba(59,130,246,0.08)',
-                    border: '1px solid rgba(59,130,246,0.2)',
-                    borderRadius: 8,
-                    fontSize: 13,
-                    color: '#93c5fd',
-                  }}>
-                    {r}
-                  </div>
-                ))}
-              </div>
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-            </div>
-          </Panel>
-        </ReactFlow>
-      </div>
-
-      {/* ── Notification ── */}
+      {/* ── Уведомление ── */}
       {notif && (
-        <div className={`notif notif--${notif.ok ? 'ok' : 'err'}`}>
+        <div key={notif.key} className={`notif notif--${notif.ok ? 'ok' : 'err'}`}>
           {notif.text}
         </div>
       )}
 
-      {/* ── Result panel ── */}
+      {/* ── Панель результатов ── */}
       {showPanel && (
-        <div className="result-panel">
-          <button className="result-panel__close" onClick={() => setShowPanel(false)}>×</button>
+        <div className="result">
+          <button className="result__close" onClick={() => setShowPanel(false)}>×</button>
+
           {project && (
             <>
-              <div className="rp-header" style={{ color: '#6ee7b7' }}>
-                <span>🎯</span> Рекомендованный проект
+              <div className="result__header" style={{ color: '#6ee7b7' }}>
+                <span>◈</span> Проект под твой уровень
               </div>
-              <div className="rp-title">{project.title}</div>
-              <p className="rp-desc">{project.description}</p>
-              <div className="rp-tags">
-                {project.technologies?.map((t, i) => <span key={i} className="tag tag--green">{t}</span>)}
-              </div>
-              <div className="rp-meta">⏱ ~{project.estimated_hours} ч · {project.difficulty}</div>
-              {project.learning_goals?.length > 0 && (
-                <div style={{ marginTop: 12 }}>
-                  <div className="rp-sublabel">Цели обучения</div>
-                  {project.learning_goals.map((g, i) => <div key={i} className="rp-goal">› {g}</div>)}
+              <div className="result__title">{project.title}</div>
+              <p className="result__desc">{project.description}</p>
+              {project.technologies?.length > 0 && (
+                <div className="result__tags">
+                  {project.technologies.map((t, i) => <span key={i} className="tag">{t}</span>)}
                 </div>
+              )}
+              <div className="result__meta">⏱ ~{project.estimated_hours} ч · {project.difficulty}</div>
+              {project.learning_goals?.length > 0 && (
+                <>
+                  <div className="result__sub">Чему научишься</div>
+                  {project.learning_goals.map((g, i) => <div key={i} className="result__goal">{g}</div>)}
+                </>
               )}
             </>
           )}
+
           {recs.length > 0 && (
             <>
-              <div className="rp-header" style={{ color: '#a5b4fc' }}>
-                <span>💡</span> Что изучить дальше
+              <div className="result__header" style={{ color: '#a5b4fc' }}>
+                <span>◉</span> Путь развития
               </div>
               {recs.map((r, i) => (
-                <div key={i} className="rec-item">
-                  <span className="rec-num">{String(i + 1).padStart(2, '0')}</span>
+                <div key={i} className="rec">
+                  <span className="rec__num">{String(i + 1).padStart(2, '0')}</span>
                   {r}
                 </div>
               ))}
@@ -1270,546 +841,71 @@ const GraphCanvas = () => {
         </div>
       )}
 
-<<<<<<< HEAD
-      {/* ── AI Preview panel ── */}
+      {/* ── AI нашёл навыки, но база спит ── */}
       {aiPreview && (
-        <div className="result-panel result-panel--warn">
-          <button className="result-panel__close" onClick={() => setAiPreview(null)}>×</button>
-          <div className="rp-header" style={{ color: '#fde68a' }}>
-            <span>⚠️</span> Neo4j не запущен
+        <div className="result result--warn">
+          <button className="result__close" onClick={() => setAiPreview(null)}>×</button>
+          <div className="result__header" style={{ color: '#fde68a' }}>
+            <span>⚠</span> Neo4j не отвечает
           </div>
-          <p className="rp-desc">AI нашёл {aiPreview.skills.length} навыков, но граф не обновлён</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
-            {aiPreview.skills.map((s, i) => {
-              const c = CAT[s.category] || CAT.skill
-              return (
-                <div key={i} className="ai-skill-row" style={{ '--c': c.color }}>
-                  <span>{c.icon}</span>
-                  <span className="ai-skill-name">{s.name}</span>
-                  <div className="ai-skill-bars">
-                    {[1,2,3,4,5].map(j => <div key={j} className={`aib${j <= (s.level||1) ? ' aib--on' : ''}`} />)}
-                  </div>
-                  <span className="ai-skill-lvl">L{s.level||1}</span>
+          <p className="result__desc">AI уже разглядел {aiPreview.skills.length} навыков — запусти базу и повтори.</p>
+          {aiPreview.skills.map((s, i) => {
+            const c = CAT[s.category] || CAT.skill
+            return (
+              <div key={i} className="ai-row" style={{ '--c-rgb': c.rgb }}>
+                <span className="ai-row__icon">{c.icon}</span>
+                <span className="ai-row__name">{s.name}</span>
+                <div className="ai-row__bars">
+                  {[1, 2, 3, 4, 5].map((j) => (
+                    <div key={j} className={`ai-row__bar${j <= (s.level || 1) ? ' ai-row__bar--on' : ''}`} />
+                  ))}
                 </div>
-              )
-            })}
-          </div>
-          <div className="warn-box">
-            Запусти Neo4j Desktop → <strong>Start</strong> → добавь навыки снова
+                <span className="ai-row__lvl">L{s.level || 1}</span>
+              </div>
+            )
+          })}
+          <div className="warn-note" style={{ marginTop: 10 }}>
+            Запусти <strong>Neo4j Desktop → Start</strong> и нажми «Извлечь навыки» ещё раз.
           </div>
         </div>
       )}
 
-      {/* ── Chat ── */}
-      {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+      {/* ── Чат ── */}
+      {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} onRefresh={() => loadGraph({ silent: true })} />}
 
-      {/* ── Global styles ── */}
-      <style>{`
-        /* ── Reset & base ── */
-        *, *::before, *::after { box-sizing: border-box; }
-
-        /* ── Sidebar ── */
-        .sidebar {
-          width: 276px; height: 100%;
-          display: flex; flex-direction: column;
-          background: rgba(8,8,24,0.72);
-          backdrop-filter: blur(32px) saturate(180%);
-          -webkit-backdrop-filter: blur(32px) saturate(180%);
-          border-right: 1px solid rgba(255,255,255,0.07);
-          box-shadow: 4px 0 48px rgba(0,0,0,0.5), inset -1px 0 0 rgba(255,255,255,0.04);
-        }
-        .sidebar__head {
-          flex-shrink: 0;
-          padding: 16px 14px 14px;
-          border-bottom: 1px solid rgba(255,255,255,0.06);
-          display: flex; align-items: center; justify-content: space-between;
-        }
-        .sidebar__body {
-          flex: 1; overflow-y: auto; padding: 12px 12px 4px;
-        }
-        .sidebar__body::-webkit-scrollbar { width: 3px; }
-        .sidebar__body::-webkit-scrollbar-track { background: transparent; }
-        .sidebar__body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
-        .sidebar__foot {
-          flex-shrink: 0; padding: 12px 12px 14px;
-          border-top: 1px solid rgba(255,255,255,0.06);
-        }
-
-        /* ── Logo ── */
-        .logo-badge {
-          width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
-          background: linear-gradient(135deg, #6d28d9 0%, #0ea5e9 100%);
-          display: flex; align-items: center; justify-content: center;
-          font-size: 17px;
-          box-shadow: 0 0 20px rgba(109,40,217,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
-        }
-        .logo-name {
-          font-weight: 800; font-size: 14px; letter-spacing: -0.5px;
-          background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(148,163,184,0.7));
-          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-          line-height: 1.2; margin-bottom: 2px;
-        }
-        .db-pill {
-          display: flex; align-items: center; gap: 5px;
-          font-size: 10px; font-weight: 600; letter-spacing: 0.1px;
-        }
-        .db-pill--ok  { color: #34d399; }
-        .db-pill--err { color: #f87171; }
-        .db-pill--wait{ color: #64748b; }
-        .db-dot {
-          width: 5px; height: 5px; border-radius: 50%;
-          background: currentColor; flex-shrink: 0;
-        }
-        .db-pill--ok .db-dot { box-shadow: 0 0 6px currentColor; animation: pulse 2s infinite; }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
-        /* ── Card sections ── */
-        .card { padding: 2px 0 6px; }
-        .card__title {
-          font-size: 10px; font-weight: 700; letter-spacing: 0.7px;
-          text-transform: uppercase; color: rgba(255,255,255,0.22);
-          margin-bottom: 10px;
-        }
-        .divider {
-          height: 1px; margin: 8px 0;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
-        }
-
-        /* ── Fields ── */
-        .field {
-          width: 100%; padding: 8px 11px; border-radius: 10px;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.09);
-          color: rgba(255,255,255,0.88); font-size: 12.5px;
-          outline: none; font-family: inherit;
-          box-shadow: inset 0 1px 4px rgba(0,0,0,0.3);
-          transition: border-color .15s, box-shadow .15s;
-        }
-        .field:focus {
-          border-color: rgba(109,40,217,0.5);
-          box-shadow: inset 0 1px 4px rgba(0,0,0,0.3), 0 0 0 3px rgba(109,40,217,0.12);
-        }
-        .field::placeholder { color: rgba(255,255,255,0.2); }
-        textarea.field { resize: vertical; line-height: 1.6; }
-        select.field { appearance: none; cursor: pointer; padding-right: 28px;
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,0.3)'/%3E%3C/svg%3E");
-          background-repeat: no-repeat; background-position: right 9px center;
-        }
-
-        /* ── Level preview ── */
-        .level-preview {
-          margin-top: 8px; padding: 9px 11px; border-radius: 10px;
-          background: rgba(var(--c-rgb, 109,40,217), 0.06);
-          border: 1px solid color-mix(in srgb, var(--c) 25%, transparent);
-          display: flex; align-items: center; gap: 8;
-        }
-        .level-preview { background: color-mix(in srgb, var(--c) 8%, transparent); border: 1px solid color-mix(in srgb, var(--c) 22%, transparent); }
-        .level-preview__icon { font-size: 13px; }
-        .level-preview__cat { font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--c); font-family: monospace; }
-        .level-preview__bars { display: flex; gap: 3px; flex: 1; }
-        .lp-bar { flex: 1; height: 3px; border-radius: 3px; background: rgba(255,255,255,0.08); transition: background .2s; }
-        .lp-bar--on { background: var(--c); box-shadow: 0 0 6px color-mix(in srgb, var(--c) 60%, transparent); }
-        .level-preview__lbl { font-size: 10px; color: rgba(255,255,255,0.35); white-space: nowrap; }
-
-        /* ── Buttons ── */
-        .btn {
-          width: 100%; padding: 9px 12px; border-radius: 10px;
-          font-size: 12.5px; font-weight: 700; cursor: pointer;
-          border: none; outline: none; font-family: inherit;
-          display: flex; align-items: center; justify-content: center; gap: 7px;
-          transition: transform .15s, opacity .15s, background .15s;
-        }
-        .btn:active { transform: scale(0.98); }
-        .btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-        .btn--primary {
-          margin-top: 10px;
-          background: linear-gradient(135deg, rgba(109,40,217,0.7), rgba(14,165,233,0.5));
-          color: rgba(255,255,255,0.92);
-          border: 1px solid rgba(255,255,255,0.12);
-          box-shadow: 0 4px 24px rgba(109,40,217,0.25), inset 0 1px 0 rgba(255,255,255,0.12);
-        }
-        .btn--primary:hover:not(:disabled) {
-          background: linear-gradient(135deg, rgba(109,40,217,0.85), rgba(14,165,233,0.65));
-          box-shadow: 0 6px 32px rgba(109,40,217,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
-          transform: translateY(-1px);
-        }
-
-        .btn--ai {
-          margin-top: 8px;
-          background: linear-gradient(135deg, rgba(244,114,182,0.18), rgba(168,85,247,0.14));
-          color: #f9a8d4;
-          border: 1px solid rgba(244,114,182,0.22);
-          box-shadow: 0 0 24px rgba(244,114,182,0.08), inset 0 1px 0 rgba(255,255,255,0.07);
-        }
-        .btn--ai:hover:not(:disabled) {
-          background: linear-gradient(135deg, rgba(244,114,182,0.28), rgba(168,85,247,0.22));
-          transform: translateY(-1px);
-        }
-
-        .btn--tool {
-          background: color-mix(in srgb, var(--tc) 10%, transparent);
-          color: var(--tc);
-          border: 1px solid color-mix(in srgb, var(--tc) 28%, transparent);
-          box-shadow: 0 0 16px color-mix(in srgb, var(--tc) 8%, transparent);
-        }
-        .btn--tool:hover:not(:disabled) {
-          background: color-mix(in srgb, var(--tc) 18%, transparent);
-          transform: translateY(-1px);
-          box-shadow: 0 4px 24px color-mix(in srgb, var(--tc) 20%, transparent);
-        }
-
-        .btn--ghost {
-          background: rgba(255,255,255,0.04);
-          color: rgba(255,255,255,0.45);
-          border: 1px solid rgba(255,255,255,0.08);
-        }
-        .btn--ghost:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); transform: translateY(-1px); }
-
-        .btn--danger {
-          background: rgba(239,68,68,0.08);
-          color: #f87171;
-          border: 1px solid rgba(239,68,68,0.18);
-        }
-        .btn--danger:hover:not(:disabled) { background: rgba(239,68,68,0.14); transform: translateY(-1px); }
-
-        /* ── Chips ── */
-        .chip {
-          padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
-          cursor: pointer; background: rgba(255,255,255,0.04);
-          border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.3);
-          transition: all .15s;
-        }
-        .chip--on {
-          background: color-mix(in srgb, var(--cc) 15%, transparent);
-          border-color: color-mix(in srgb, var(--cc) 40%, transparent);
-          color: var(--cc);
-          box-shadow: 0 0 12px color-mix(in srgb, var(--cc) 15%, transparent);
-        }
-        .chip:hover:not(.chip--on) { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.55); }
-
-        /* ── Icon button ── */
-        .icon-btn {
-          width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.08);
-          color: rgba(255,255,255,0.4); cursor: pointer; font-size: 18px;
-          display: flex; align-items: center; justify-content: center;
-          transition: all .15s;
-        }
-        .icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.7); }
-
-        /* ── Open button ── */
-        .open-btn {
-          position: absolute; top: 14px; left: 14px; z-index: 200;
-          width: 40px; height: 40px; border-radius: 12px;
-          background: rgba(8,8,24,0.8);
-          backdrop-filter: blur(16px);
-          border: 1px solid rgba(255,255,255,0.1);
-          color: rgba(255,255,255,0.75); cursor: pointer; font-size: 18px;
-          display: flex; align-items: center; justify-content: center;
-          box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-          transition: all .2s;
-        }
-        .open-btn:hover { background: rgba(255,255,255,0.1); transform: scale(1.08); }
-
-        /* ── Chat button ── */
-        .chat-btn {
-          width: 100%; padding: 11px; border-radius: 12px;
-          background: linear-gradient(135deg, rgba(244,114,182,0.12), rgba(168,85,247,0.1));
-          border: 1px solid rgba(244,114,182,0.2);
-          color: #f9a8d4; font-weight: 700; font-size: 13px; cursor: pointer;
-          display: flex; align-items: center; justify-content: center; gap: 8px;
-          box-shadow: 0 0 28px rgba(244,114,182,0.08), inset 0 1px 0 rgba(255,255,255,0.08);
-          transition: all .2s; font-family: inherit;
-        }
-        .chat-btn:hover { background: linear-gradient(135deg, rgba(244,114,182,0.2), rgba(168,85,247,0.17)); transform: translateY(-1px); box-shadow: 0 6px 32px rgba(244,114,182,0.15); }
-
-        /* ── Skill node (CSS-only hover, no React state) ── */
-        .sn {
-          position: relative; min-width: 155px; max-width: 175px;
-          border-radius: 16px; padding: 11px 13px 13px;
-          cursor: grab; user-select: none; overflow: hidden;
-          background: linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%);
-          backdrop-filter: blur(20px) saturate(160%);
-          -webkit-backdrop-filter: blur(20px) saturate(160%);
-          border: 1px solid rgba(255,255,255,0.1);
-          box-shadow:
-            0 4px 24px rgba(0,0,0,0.45),
-            0 0 28px color-mix(in srgb, var(--c) 8%, transparent),
-            inset 0 1px 0 rgba(255,255,255,0.1);
-          transition: transform .18s cubic-bezier(.4,0,.2,1), box-shadow .18s cubic-bezier(.4,0,.2,1), border-color .18s;
-        }
-        .sn:hover {
-          transform: translateY(-3px) scale(1.02);
-          border-color: rgba(255,255,255,0.18);
-          box-shadow:
-            0 10px 40px rgba(0,0,0,0.55),
-            0 0 50px color-mix(in srgb, var(--c) 18%, transparent),
-            inset 0 1px 0 rgba(255,255,255,0.16);
-        }
-        .sn--sel {
-          border-color: color-mix(in srgb, var(--c) 70%, transparent) !important;
-          box-shadow:
-            0 0 0 1.5px color-mix(in srgb, var(--c) 55%, transparent),
-            0 10px 40px rgba(0,0,0,0.55),
-            0 0 55px color-mix(in srgb, var(--c) 22%, transparent),
-            inset 0 1px 0 rgba(255,255,255,0.18) !important;
-          transform: translateY(-2px) scale(1.02);
-        }
-        .sn__line {
-          position: absolute; top: 0; left: 18%; right: 18%; height: 1.5px;
-          background: linear-gradient(90deg, transparent, var(--c), transparent);
-          opacity: 0.7;
-        }
-        .sn__blob {
-          position: absolute; top: -20px; left: -20px; width: 90px; height: 90px;
-          border-radius: 50%;
-          background: radial-gradient(circle, color-mix(in srgb, var(--c) 18%, transparent) 0%, transparent 70%);
-          pointer-events: none;
-        }
-        .sn__handle {
-          width: 8px !important; height: 8px !important;
-          background: var(--c) !important;
-          border: 2px solid rgba(8,8,24,0.9) !important;
-        }
-        .sn__cat {
-          position: relative; display: flex; align-items: center; gap: 5px; margin-bottom: 7px;
-        }
-        .sn__icon {
-          width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
-          background: color-mix(in srgb, var(--c) 14%, transparent);
-          border: 1px solid color-mix(in srgb, var(--c) 28%, transparent);
-          display: flex; align-items: center; justify-content: center; font-size: 11px;
-        }
-        .sn__cat-label {
-          font-size: 9px; color: var(--c); font-weight: 700;
-          letter-spacing: 0.7px; text-transform: uppercase; font-family: monospace;
-        }
-        .sn__level-badge {
-          margin-left: auto; font-size: 9px; font-weight: 800;
-          color: var(--c); font-family: monospace; opacity: 0.75;
-        }
-        .sn__title {
-          position: relative; font-weight: 700;
-          color: rgba(255,255,255,0.92); font-size: 12.5px;
-          line-height: 1.35; word-break: break-word; margin-bottom: 9px;
-          letter-spacing: -0.15px;
-        }
-        .sn__bar-track { display: flex; gap: 3px; position: relative; }
-        .sn__bar-seg {
-          flex: 1; height: 3px; border-radius: 3px;
-          background: rgba(255,255,255,0.08); transition: background .3s;
-        }
-        .sn__bar-seg--on {
-          background: linear-gradient(90deg, color-mix(in srgb, var(--c) 70%, transparent), var(--c));
-          box-shadow: 0 0 6px color-mix(in srgb, var(--c) 60%, transparent);
-        }
-
-        /* ── ReactFlow overrides ── */
-        .react-flow__renderer { z-index: 0; }
-        .react-flow__attribution { display: none; }
-        .react-flow__controls-button {
-          background: rgba(8,8,24,0.85) !important;
-          border-color: rgba(255,255,255,0.08) !important;
-          color: rgba(255,255,255,0.45) !important;
-          transition: all .15s !important;
-        }
-        .react-flow__controls-button:hover {
-          background: rgba(255,255,255,0.08) !important;
-          color: rgba(255,255,255,0.85) !important;
-        }
-        .react-flow__node { transition: opacity .25s ease; }
-
-        /* ── Legend ── */
-        .legend {
-          display: flex; gap: 14px; align-items: center;
-          padding: 7px 14px; border-radius: 12px;
-          background: rgba(8,8,24,0.75);
-          backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255,255,255,0.07);
-          box-shadow: 0 4px 20px rgba(0,0,0,0.35);
-          font-size: 10.5px; color: rgba(255,255,255,0.35);
-        }
-        .legend__item { display: flex; align-items: center; gap: 5px; }
-        .legend__dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-
-        /* ── Notification ── */
-        .notif {
-          position: fixed; bottom: 28px; right: 24px; z-index: 9999;
-          padding: 11px 20px; border-radius: 14px; font-weight: 600; font-size: 13px;
-          backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-          animation: slideUp .25s cubic-bezier(.4,0,.2,1);
-          background: rgba(8,8,24,0.88);
-          box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }
-        .notif--ok  { border: 1px solid rgba(52,211,153,0.3); color: #6ee7b7; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 24px rgba(52,211,153,0.1); }
-        .notif--err { border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 24px rgba(239,68,68,0.1); }
-        @keyframes slideUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes slideIn { from{opacity:0;transform:translateX(10px)} to{opacity:1;transform:translateX(0)} }
-
-        /* ── Spinner ── */
-        .spinner {
-          display: inline-block; width: 12px; height: 12px; border-radius: 50%;
-          border: 2px solid rgba(255,255,255,0.2); border-top-color: #f9a8d4;
-          animation: spin .7s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* ── Result panel ── */
-        .result-panel {
-          position: absolute; top: 16px; right: 16px; z-index: 400;
-          width: 340px; max-height: calc(100vh - 32px); overflow-y: auto;
-          padding: 20px; border-radius: 18px;
-          background: rgba(8,8,24,0.85);
-          backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px);
-          border: 1px solid rgba(255,255,255,0.08);
-          box-shadow: 0 8px 48px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.07);
-          color: rgba(255,255,255,0.8);
-          animation: slideIn .25s cubic-bezier(.4,0,.2,1);
-        }
-        .result-panel--warn { border-color: rgba(251,191,36,0.18); box-shadow: 0 8px 48px rgba(0,0,0,0.6), 0 0 40px rgba(251,191,36,0.05); }
-        .result-panel::-webkit-scrollbar { width: 3px; }
-        .result-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-        .result-panel__close {
-          position: absolute; top: 14px; right: 14px;
-          width: 26px; height: 26px; border-radius: 7px;
-          background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1);
-          color: rgba(255,255,255,0.4); cursor: pointer; font-size: 17px;
-          display: flex; align-items: center; justify-content: center;
-          transition: all .15s;
-        }
-        .result-panel__close:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.7); }
-        .rp-header { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 13px; margin-bottom: 12px; }
-        .rp-title  { font-weight: 700; color: rgba(255,255,255,0.92); font-size: 15px; margin-bottom: 8px; }
-        .rp-desc   { font-size: 12px; color: rgba(255,255,255,0.45); line-height: 1.7; margin: 0 0 12px; }
-        .rp-tags   { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
-        .tag { padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-        .tag--green { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2); color: #6ee7b7; }
-        .rp-meta   { font-size: 11px; color: rgba(255,255,255,0.25); }
-        .rp-sublabel { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.2); margin-bottom: 6px; }
-        .rp-goal   { font-size: 11px; color: rgba(255,255,255,0.4); padding-left: 12px; position: relative; margin-bottom: 3px; }
-        .rp-goal::before { content: '›'; position: absolute; left: 0; color: #34d399; }
-        .rec-item  { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; background: rgba(129,140,248,0.06); border: 1px solid rgba(129,140,248,0.12); font-size: 12px; color: rgba(255,255,255,0.65); margin-bottom: 5px; }
-        .rec-num   { font-size: 10px; font-weight: 800; font-family: monospace; color: #818cf8; flex-shrink: 0; }
-
-        /* ── AI skill rows ── */
-        .ai-skill-row {
-          display: flex; align-items: center; gap: 8px; padding: 7px 10px;
-          background: color-mix(in srgb, var(--c) 7%, transparent);
-          border: 1px solid color-mix(in srgb, var(--c) 20%, transparent);
-          border-radius: 9px;
-        }
-        .ai-skill-name { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.85); flex: 1; }
-        .ai-skill-bars { display: flex; gap: 2px; width: 50px; }
-        .aib { flex: 1; height: 2.5px; border-radius: 2px; background: rgba(255,255,255,0.08); }
-        .aib--on { background: var(--c); }
-        .ai-skill-lvl { font-size: 9px; font-weight: 700; font-family: monospace; color: var(--c); }
-        .warn-box { padding: 10px 12px; background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.14); border-radius: 10px; font-size: 11px; color: rgba(255,255,255,0.4); line-height: 1.65; }
-        .warn-box strong { color: #fde68a; }
-
-        /* ── Scrollbar global ── */
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.13); }
-=======
-      <style>{`
-        @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
-        .react-flow__node { transition: opacity .2s; }
-        .react-flow__controls-button { background: transparent !important; border-color: rgba(255,255,255,0.1) !important; color: #94a3b8 !important; }
-        .react-flow__controls-button:hover { background: rgba(255,255,255,0.05) !important; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-        textarea::placeholder, input::placeholder { color: #475569 !important; }
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-      `}</style>
+      {/* ── Загрузка ── */}
+      <div className={`boot${booting ? '' : ' boot--done'}`} aria-hidden={!booting}>
+        <svg className="boot__art" viewBox="0 0 64 64" fill="none">
+          <defs>
+            <linearGradient id="boot-g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="#22d3ee" />
+              <stop offset=".5" stopColor="#8b5cf6" />
+              <stop offset="1" stopColor="#f472b6" />
+            </linearGradient>
+          </defs>
+          <g stroke="url(#boot-g)" strokeWidth="2" opacity=".7">
+            <path d="M20 18 L44 24 L46 44 L26 48 Z" />
+            <path d="M20 18 L26 48" opacity=".5" />
+          </g>
+          <g fill="url(#boot-g)">
+            <circle cx="20" cy="18" r="5"><animate attributeName="opacity" values="1;.45;1" dur="2.2s" repeatCount="indefinite" /></circle>
+            <circle cx="44" cy="24" r="4.4"><animate attributeName="opacity" values=".45;1;.45" dur="2.2s" repeatCount="indefinite" /></circle>
+            <circle cx="46" cy="44" r="4"><animate attributeName="opacity" values="1;.45;1" dur="2.2s" begin=".7s" repeatCount="indefinite" /></circle>
+            <circle cx="26" cy="48" r="5"><animate attributeName="opacity" values=".45;1;.45" dur="2.2s" begin=".7s" repeatCount="indefinite" /></circle>
+          </g>
+        </svg>
+        <div className="boot__name">MindNet</div>
+        <div className="boot__bar" />
+      </div>
     </div>
   )
 }
 
-<<<<<<< HEAD
-=======
-// ─── Вспомогательные компоненты ───────────────────────────────
-
-const Section = ({ title, children }) => {
-  const [open, setOpen] = useState(true)
-  return (
-    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', padding: '8px 0' }}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          width: '100%', background: 'none', border: 'none',
-          padding: '4px 16px 6px', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}
-      >
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-          {title}
-        </span>
-        <span style={{ fontSize: 10, color: '#334155' }}>{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div style={{ padding: '0 16px 8px' }}>
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
-
-const iStyle = {
-  width:        '100%',
-  padding:      '7px 10px',
-  borderRadius: 7,
-  border:       '1px solid rgba(255,255,255,0.08)',
-  background:   'rgba(255,255,255,0.04)',
-  color:        '#e2e8f0',
-  fontSize:     12,
-  outline:      'none',
-  boxSizing:    'border-box',
-}
-
-const SBtn = ({ onClick, color, children, disabled, style }) => (
-  <button
-    onClick={onClick}
-    disabled={disabled}
-    style={{
-      padding:      '8px 12px',
-      background:   disabled ? 'rgba(255,255,255,0.04)' : `${color}22`,
-      border:       `1px solid ${disabled ? 'rgba(255,255,255,0.08)' : color + '55'}`,
-      borderRadius: 7,
-      color:        disabled ? '#475569' : color,
-      fontWeight:   600,
-      fontSize:     12,
-      cursor:       disabled ? 'not-allowed' : 'pointer',
-      transition:   'all .15s',
-      ...style,
-    }}
-  >
-    {children}
-  </button>
+/* Провайдер нужен, чтобы будильник измерений имел доступ к стору reactflow */
+const GraphCanvasWithProvider = () => (
+  <ReactFlowProvider>
+    <GraphCanvas />
+  </ReactFlowProvider>
 )
 
-const FilterChip = ({ label, active, color, onClick, title }) => (
-  <button
-    onClick={onClick}
-    title={title}
-    style={{
-      padding:    '3px 9px',
-      background: active ? `${color}22` : 'transparent',
-      border:     `1px solid ${active ? color : 'rgba(255,255,255,0.08)'}`,
-      borderRadius: 20,
-      color:      active ? color : '#475569',
-      fontSize:   11,
-      cursor:     'pointer',
-      transition: 'all .15s',
-    }}
-  >
-    {label}
-  </button>
-)
-
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-export default GraphCanvas
+export default GraphCanvasWithProvider
