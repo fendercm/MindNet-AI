@@ -108,3 +108,45 @@ def delete_all_nodes():
     """Удалить всё"""
     db.query("MATCH (n) DETACH DELETE n")
     return {"deleted": True}
+
+def update_node(node_id: str, title: str = None, description: str = None,
+                node_type: str = None, level: int = None):
+    """Обновляет поля узла по id (только переданные)"""
+    sets = []
+    params = {"node_id": node_id}
+    if title is not None:
+        sets.append("n.title = $title")
+        params["title"] = title.strip()
+    if description is not None:
+        sets.append("n.description = $description")
+        params["description"] = description
+    if node_type is not None:
+        sets.append("n.node_type = $node_type")
+        params["node_type"] = node_type
+    if level is not None:
+        sets.append("n.level = $level")
+        params["level"] = level
+    if not sets:
+        return get_node(node_id)
+    query = f"""
+    MATCH (n:KnowledgeNode {{id: $node_id}})
+    SET {", ".join(sets)}
+    RETURN n
+    """
+    result = db.query(query, params)
+    return dict(result[0]["n"]) if result else None
+
+
+def get_node(node_id: str):
+    """Возвращает один узел по id или None"""
+    result = db.query("MATCH (n:KnowledgeNode {id: $node_id}) RETURN n", {"node_id": node_id})
+    return dict(result[0]["n"]) if result else None
+
+
+def delete_node(node_id: str):
+    """Удаляет узел и все его связи. Возвращает факт удаления."""
+    result = db.query(
+        "MATCH (n:KnowledgeNode {id: $node_id}) DETACH DELETE n RETURN count(n) AS deleted",
+        {"node_id": node_id},
+    )
+    return bool(result and result[0]["deleted"])

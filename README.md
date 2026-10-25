@@ -2,18 +2,25 @@
 
 **Внешний мозг для разработчика и студента** — интерактивная карта знаний с ИИ-аналитикой.
 
-![status](https://img.shields.io/badge/status-MVP-blue) ![Python](https://img.shields.io/badge/Python-3.10+-green) ![React](https://img.shields.io/badge/React-18-blue) ![Neo4j](https://img.shields.io/badge/Neo4j-5.x-purple)
+![status](https://img.shields.io/badge/status-MVP-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/Python-3.10+-green) ![React](https://img.shields.io/badge/React-18-blue) ![Neo4j](https://img.shields.io/badge/Neo4j-5.x-purple)
+
+![MindNet AI — карта знаний](docs/img/main.png)
 
 ## 🎯 О проекте
 
-MindNet AI — это не просто заметки. Это **граф знаний**, который визуализирует твои навыки, технологии и учебные предметы в виде интерактивной карты.
+MindNet AI — это не просто заметки. Это **граф знаний**, который визуализирует твои навыки, технологии и учебные предметы в виде интерактивной карты-созвездия: навыки группируются по категориям, связи подписаны и расцвечены, а фон — живая туманность со звёздами.
+
+![Чат с AI-ментором](docs/img/chat.png)
 
 ### 🔥 Ключевые возможности
 
-- **Интерактивный граф** — узлы (навыки) и связи между ними
+- **Интерактивный граф** — узлы-созвездия по категориям, редактирование навыка кликом (название, тип, уровень, удаление)
 - **ИИ-аналитик** — рекомендует, что изучать дальше
 - **Генератор проектов** — предлагает пет-проекты на основе твоих навыков
-- **Детектор слепых зон** — находит несвязанные знания
+- **Извлечение навыков из текста** — опиши свой опыт, AI сам разложит его на граф
+- **Чат с ментором** — видит твой граф, история переживает перезапуск
+- **Бэкап вселенной** — экспорт/импорт графа в JSON одним кликом
+- **Живой интерфейс** — тёмная космическая тема, сплэш-экран, горячие клавиши (`Ctrl+K` — поиск, `Esc` — закрыть панели)
 
 ## 🏗 Архитектура
 
@@ -68,6 +75,16 @@ npm run dev                       # дев-режим в браузере
 npm run electron:dev              # дев-режим в Electron
 ```
 
+## 🧪 Тесты и CI
+
+```bash
+cd frontend
+npm test                          # vitest: парсер данных, раскладка, вьюпорт
+npx eslint src                    # статический анализ
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) прогоняет lint, тесты и сборку на каждый push.
+
 ## 📦 Сборка десктоп-приложения (Windows)
 
 Одной командой из корня репозитория:
@@ -95,15 +112,24 @@ build.bat
 
 ```
 backend/
-├── main.py            # FastAPI: /nodes, /edges, /health
-├── crud.py            # операции над графом
+├── main.py            # FastAPI: /nodes (CRUD), /edges, /graph, /health, /ai/*
+├── crud.py            # операции над графом (включая update/delete узла)
 ├── database.py        # подключение к Neo4j
 ├── schemas.py         # pydantic-схемы
 ├── ai_service.py      # мультипровайдерный ИИ-слой с фолбэком
 ├── ai_layer.py        # декомпозиция текста в дерево навыков
 └── requirements.txt
 frontend/
-├── src/               # React-приложение (GraphCanvas, ChatPanel, api/client)
+├── src/
+│   ├── components/    # GraphCanvas (канва), ChatPanel (ментор)
+│   ├── lib/graph.js   # чистая логика: парсер, раскладка, вьюпорт (+ тесты)
+│   ├── fonts/         # шрифты вшиты — приложение работает офлайн
+│   └── api/client.js  # типизированный клиент API
 └── electron-app/      # оболочка Electron + упаковка
+docs/img/              # скриншоты
 build.bat              # сборка десктоп-версии в один клик
 ```
+
+## 📄 Лицензия
+
+MIT — см. [LICENSE](LICENSE).

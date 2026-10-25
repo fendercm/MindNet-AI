@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Optional
 from database import db
 import crud
-from schemas import NodeCreate, EdgeCreate
+from schemas import NodeCreate, EdgeCreate, NodeUpdate
 from ai_service import AIService
 
 
@@ -67,6 +67,30 @@ def list_nodes():
         return crud.get_all_nodes()
     except Exception:
         return []
+
+
+@app.put("/nodes/{node_id}")
+def update_node(node_id: str, node: NodeUpdate):
+    """Обновить поля узла по id"""
+    result = crud.update_node(
+        node_id,
+        node.title,
+        node.description,
+        node.node_type,
+        node.level,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return result
+
+
+@app.delete("/nodes/{node_id}")
+def delete_node(node_id: str):
+    """Удалить узел и все его связи"""
+    deleted = crud.delete_node(node_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return {"message": "Node deleted", "id": node_id}
 
 
 @app.post("/edges/")

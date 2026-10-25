@@ -1,3 +1,6 @@
+/* Шрифты вшиты в бандл — Electron работает офлайн */
+@import './fonts/fonts.css';
+
 /* ═══════════════════════════════════════════════════════════════
    MindNet AI — Design System «Deep Space»
    Шрифты: Space Grotesk (display) · Inter (UI) · JetBrains Mono (метки)
@@ -1686,4 +1689,55 @@ select.field option {
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ═══════════════════ ДИАЛОГ ПОДТВЕРЖДЕНИЯ ═══════════════════ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(3, 4, 12, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-rise 0.25s var(--ease-out);
+}
+
+.modal {
+  width: 360px;
+  padding: 22px 22px 18px;
+  border-radius: 18px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(0, 0, 8, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: notif-in 0.3s var(--ease-spring);
+}
+
+.modal__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15.5px;
+  color: #f2f5ff;
+  margin-bottom: 8px;
+}
+
+.modal__text {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-dim);
+  margin: 0 0 16px;
+}
+
+.modal__row {
+  display: flex;
+  gap: 8px;
+}
+
+.modal__row .btn + .btn {
+  margin-top: 0;
 }

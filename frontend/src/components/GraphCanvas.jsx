@@ -4,118 +4,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, {
   addEdge, Background, Controls, MiniMap, Panel,
   useNodesState, useEdgesState, MarkerType, Handle, Position,
-  ReactFlowProvider, useStoreApi,
+  ReactFlowProvider, useStoreApi, useStore,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { api } from '../api/client'
 import { toPng } from 'html-to-image'
+import {
+  BG, CAT, CAT_ORDER, EDGE_COLORS, EDGE_LABELS, LEVELS,
+  parseNode, applyLayout, viewportFor,
+} from '../lib/graph'
 
 /* ─── Вселенная ─────────────────────────────────────────────── */
-const BG = '#05060f'
 const SIDEBAR_W = 292
-
-const CAT = {
-  language:  { color: '#38bdf8', rgb: '56,189,248',   icon: '⌨',  label: 'Язык'      },
-  framework: { color: '#f472b6', rgb: '244,114,182',  icon: '⚡',  label: 'Фреймворк' },
-  library:   { color: '#a78bfa', rgb: '167,139,250',  icon: '📦', label: 'Библиотека'},
-  database:  { color: '#fbbf24', rgb: '251,191,36',   icon: '🗄',  label: 'База данных'},
-  tool:      { color: '#34d399', rgb: '52,211,153',   icon: '🔧', label: 'Инструмент'},
-  math:      { color: '#fb923c', rgb: '251,146,60',   icon: '📐', label: 'Математика' },
-  concept:   { color: '#818cf8', rgb: '129,140,248',  icon: '💡', label: 'Концепция' },
-  skill:     { color: '#e879f9', rgb: '232,121,249',  icon: '🧠', label: 'Навык'     },
-}
-const CAT_ORDER = ['language', 'framework', 'library', 'database', 'tool', 'math', 'concept', 'skill']
-
-const EDGE_COLORS = {
-  requires:    '#f472b6',
-  extends:     '#38bdf8',
-  complements: '#34d399',
-  used_with:   '#fbbf24',
-  related_to:  '#64748b',
-}
-const EDGE_LABELS = {
-  requires: 'требует', extends: 'расширяет', complements: 'дополняет',
-  used_with: 'вместе', related_to: 'связано',
-}
-
-const LEVELS = ['', 'Новичок', 'Базовый', 'Средний', 'Продвинутый', 'Эксперт']
-
-/* ─── Разбор узла: тотально всеядный ────────────────────────── */
-const parseNode = (n) => {
-  let level = parseInt(n.level) || 1
-  let node_type = String(n.node_type ?? 'skill').toLowerCase()
-  const desc = n.description != null ? String(n.description) : ''
-  if ((!n.level || n.level === 1) && desc) {
-    const m = desc.match(/Level\s*(\d+)/i)
-    if (m) level = parseInt(m[1])
-    const c = desc.match(/^(language|framework|library|database|tool|math|concept)/i)
-    if (c) node_type = c[1].toLowerCase()
-  }
-  return {
-    level: Math.min(Math.max(level, 1), 5),
-    node_type: CAT_ORDER.includes(node_type) ? node_type : 'skill',
-  }
-}
-
-/* ─── Раскладка: созвездия по категориям ────────────────────── */
-const NW = 170, NH = 104, PX = 18, PY = 18, GX = 110, HEADER_H = 58
-
-const applyLayout = (nodes) => {
-  if (!nodes.length) return { nodes: [], headers: [], bounds: null }
-
-  const groups = {}
-  CAT_ORDER.forEach((t) => { groups[t] = [] })
-  nodes.forEach((n) => {
-    const t = n.data.node_type
-    if (!groups[t]) groups[t] = []
-    groups[t].push(n)
-  })
-
-  const filled = CAT_ORDER.filter((t) => groups[t].length)
-  const positioned = []
-  const headers = []
-  let cx = 0
-  let maxH = 0
-
-  filled.forEach((type) => {
-    const g = groups[type]
-    const cols = Math.max(1, Math.ceil(Math.sqrt(g.length * 1.5)))
-    const rows = Math.ceil(g.length / cols)
-    const gw = cols * (NW + PX) - PX + 44
-    const gh = HEADER_H + rows * (NH + PY) - PY + 20
-    maxH = Math.max(maxH, gh)
-
-    g.forEach((node, i) => {
-      positioned.push({
-        ...node,
-        position: {
-          x: cx + 22 + (i % cols) * (NW + PX),
-          y: HEADER_H + Math.floor(i / cols) * (NH + PY),
-        },
-      })
-    })
-
-    headers.push({
-      id: `__hdr_${type}`,
-      type: 'groupLabel',
-      position: { x: cx + 24, y: 16 },
-      data: { catType: type, count: g.length },
-      draggable: false,
-      selectable: false,
-      connectable: false,
-      deletable: false,
-      zIndex: -1,
-    })
-
-    cx += gw + GX
-  })
-
-  return {
-    nodes: positioned,
-    headers,
-    bounds: { x: -16, y: -12, width: cx - GX + 48, height: maxH + 30 },
-  }
-}
 
 /* ─── Нода знания ───────────────────────────────────────────── */
 const SkillNode = ({ data, selected }) => {
@@ -246,10 +146,13 @@ const GraphCanvas = () => {
   const [booting, setBooting] = useState(true)
   const [epoch, setEpoch] = useState(0)
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 })
+  const [details, setDetails] = useState(null)
+  const [confirmBox, setConfirmBox] = useState(null)
 
   const searchRef = useRef(null)
   const notifTimer = useRef(null)
   const graphRef = useRef(null)
+  const fileRef = useRef(null)
   const boundsRef = useRef(null)
   const assumedRef = useRef(null)
   const correctedRef = useRef(false)
@@ -258,17 +161,6 @@ const GraphCanvas = () => {
     setNotif({ text, ok, key: Date.now() })
     clearTimeout(notifTimer.current)
     notifTimer.current = setTimeout(() => setNotif(null), 3800)
-  }, [])
-
-  /* Вьюпорт по границам раскладки — не зависит от измерений reactflow */
-  const viewportFor = useCallback((b, cw, ch) => {
-    const pad = 44
-    const zoom = Math.max(0.05, Math.min((cw - pad * 2) / b.width, (ch - pad * 2) / b.height, 1.1))
-    return {
-      x: (cw - b.width * zoom) / 2 - b.x * zoom,
-      y: (ch - b.height * zoom) / 2 - b.y * zoom,
-      zoom,
-    }
   }, [])
 
   const checkHealth = useCallback(async () => {
@@ -353,7 +245,7 @@ const GraphCanvas = () => {
     } catch {
       notify('Не удалось загрузить граф — сервер или база спит', false)
     }
-  }, [dbStatus, notify, setEdges, setNodes, sidebarOpen, viewportFor])
+  }, [dbStatus, notify, setEdges, setNodes, sidebarOpen])
 
   /* Окно могло быть ещё не развернуто в момент загрузки (webview/Electron):
      сверяем фактический размер канвы с предположенным и пересчитываем вьюпорт */
@@ -376,7 +268,7 @@ const GraphCanvas = () => {
       }
     }, 250)
     return () => clearInterval(timer)
-  }, [epoch, viewportFor])
+  }, [epoch])
 
   /* Будильник измерений: в средах без постоянного композита (скрытое окно
      Electron, встроенные webview) ResizeObserver узлов может не сработать —
@@ -441,6 +333,13 @@ const GraphCanvas = () => {
       (filterCat !== 'all' && d.node_type !== filterCat)
     return { ...n, className: dimmed ? 'dimmed' : '' }
   }), [nodes, search, filterLvl, filterCat])
+
+  /* Подписи рёбер прячутся при далёком зуме — иначе каша */
+  const edgeLabelsHidden = useStore((s) => s.transform[2] < 0.35)
+  const displayEdges = useMemo(
+    () => (edgeLabelsHidden ? edges.map((e) => ({ ...e, label: undefined })) : edges),
+    [edges, edgeLabelsHidden],
+  )
 
   const onConnect = useCallback((p) => {
     setEdges((eds) => addEdge({
@@ -546,16 +445,109 @@ const GraphCanvas = () => {
     }
   }
 
-  const clearAll = async () => {
-    if (!window.confirm('Стереть все знания из вселенной? Это необратимо.')) return
+  const clearAll = () => {
+    setConfirmBox({
+      title: 'Стереть вселенную?',
+      text: 'Все узлы и связи исчезнут безвозвратно. Сначала можно сохранить вселенную в JSON.',
+      danger: 'Да, стереть',
+      onYes: async () => {
+        setLoading(true)
+        try {
+          await api.clearAll()
+          setNodes([]); setEdges([]); setProject(null); setRecs([])
+          setShowPanel(false); setNodeCount(0); setDetails(null)
+          notify('✓ Вселенная очищена')
+        } catch (e) {
+          notify(e.message || 'Не вышло', false)
+        } finally {
+          setLoading(false)
+        }
+      },
+    })
+  }
+
+  /* ── Редактирование узла ── */
+  const saveDetails = async () => {
+    if (!details?.id) return
+    try {
+      await api.updateNode(details.id, {
+        title: details.title.trim() || details.label,
+        node_type: details.node_type,
+        level: details.level,
+      })
+      setDetails(null)
+      await loadGraph({ silent: true })
+      notify('✓ Узел обновлён')
+    } catch (e) {
+      notify(e.message || 'Сохранить не вышло', false)
+    }
+  }
+
+  const deleteDetails = async () => {
+    if (!details?.id) return
+    const id = details.id
+    setConfirmBox({
+      title: `Удалить «${details.label}»?`,
+      text: 'Узел и все его связи исчезнут.',
+      danger: 'Удалить',
+      onYes: async () => {
+        try {
+          await api.deleteNode(id)
+          setDetails(null)
+          await loadGraph({ silent: true })
+          notify('✓ Узел удалён')
+        } catch (e) {
+          notify(e.message || 'Удалить не вышло', false)
+        }
+      },
+    })
+  }
+
+  /* ── Бэкап вселенной ── */
+  const exportJson = async () => {
+    try {
+      const data = await api.getGraph()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      Object.assign(document.createElement('a'), {
+        download: `mindnet-backup-${new Date().toISOString().slice(0, 10)}.json`,
+        href: url,
+      }).click()
+      URL.revokeObjectURL(url)
+      notify('✓ Вселенная сохранена в файл')
+    } catch {
+      notify('Экспорт не удался', false)
+    }
+  }
+
+  const importJson = async (file) => {
+    if (!file) return
     setLoading(true)
     try {
-      await api.clearAll()
-      setNodes([]); setEdges([]); setProject(null); setRecs([])
-      setShowPanel(false); setNodeCount(0)
-      notify('✓ Вселенная очищена')
-    } catch (e) {
-      notify(e.message || 'Не вышло', false)
+      const data = JSON.parse(await file.text())
+      if (!Array.isArray(data.nodes)) throw new Error('нет nodes')
+      let ok = 0
+      for (const n of data.nodes) {
+        if (!n?.title) continue
+        await api.createNode({
+          title: String(n.title),
+          description: n.description ? String(n.description) : '',
+          node_type: n.node_type || 'skill',
+          level: n.level || 1,
+        }).then(() => { ok += 1 }).catch(() => {})
+      }
+      for (const e of data.edges || []) {
+        if (e?.from == null || e?.to == null) continue
+        await api.createEdge({
+          from_node: String(e.from),
+          to_node: String(e.to),
+          relation_type: e.relation_type || 'related_to',
+        }).catch(() => {})
+      }
+      await loadGraph({ silent: true })
+      notify(`✓ Импортировано ${ok} узлов`)
+    } catch {
+      notify('Файл не похож на вселенную MindNet', false)
     } finally {
       setLoading(false)
     }
@@ -712,6 +704,10 @@ const GraphCanvas = () => {
               <div className="section__title">Действия</div>
               <div style={{ display: 'flex', gap: 7 }}>
                 <button className="btn btn--ghost" onClick={exportPng}>⬇ PNG</button>
+                <button className="btn btn--ghost" onClick={exportJson}>⬇ JSON</button>
+              </div>
+              <div style={{ display: 'flex', gap: 7, marginTop: 7 }}>
+                <button className="btn btn--ghost" onClick={() => fileRef.current?.click()} disabled={loading}>⬆ Импорт</button>
                 <button
                   className="btn btn--ghost"
                   onClick={() => { loadGraph({ silent: true }); checkHealth(); notify('✓ Обновлено') }}
@@ -719,6 +715,16 @@ const GraphCanvas = () => {
                   ↻ Обновить
                 </button>
               </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  importJson(e.target.files?.[0])
+                  e.target.value = ''
+                }}
+              />
               <button className="btn btn--danger" onClick={clearAll} disabled={loading}>✕ Стереть вселенную</button>
             </section>
           </div>
@@ -757,11 +763,17 @@ const GraphCanvas = () => {
         <ReactFlow
           key={epoch}
           nodes={visibleNodes}
-          edges={edges}
+          edges={displayEdges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeClick={(_, n) => {
+            if (n.type === 'skill') {
+              setDetails({ id: n.id, ...n.data })
+              setShowPanel(false); setAiPreview(null)
+            }
+          }}
           connectionLineType="smoothstep"
           connectionLineStyle={{ stroke: '#8b5cf6', strokeWidth: 1.6, strokeDasharray: '5 4' }}
           defaultViewport={viewport}
@@ -838,6 +850,65 @@ const GraphCanvas = () => {
               ))}
             </>
           )}
+        </div>
+      )}
+
+      {/* ── Панель узла: редактирование ── */}
+      {details && (
+        <div className="result" key={details.id}>
+          <button className="result__close" onClick={() => setDetails(null)}>×</button>
+          <div className="result__header" style={{ color: CAT[details.node_type]?.color || '#a5b4fc' }}>
+            <span>{CAT[details.node_type]?.icon || '🧠'}</span> Редактирование узла
+          </div>
+          <input
+            className="field"
+            style={{ marginBottom: 8 }}
+            value={details.title}
+            onChange={(e) => setDetails({ ...details, title: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && saveDetails()}
+            placeholder="Название навыка"
+          />
+          <div className="field-row" style={{ marginTop: 0 }}>
+            <select
+              className="field"
+              style={{ flex: 1 }}
+              value={details.node_type}
+              onChange={(e) => setDetails({ ...details, node_type: e.target.value })}
+            >
+              {CAT_ORDER.map((t) => <option key={t} value={t}>{CAT[t].icon} {CAT[t].label}</option>)}
+            </select>
+            <select
+              className="field"
+              style={{ width: 70 }}
+              value={details.level}
+              onChange={(e) => setDetails({ ...details, level: Number(e.target.value) })}
+            >
+              {[1, 2, 3, 4, 5].map((l) => <option key={l} value={l}>L{l}</option>)}
+            </select>
+          </div>
+          <button className="btn btn--primary" style={{ marginTop: 10 }} onClick={saveDetails}>
+            ✓ Сохранить
+          </button>
+          <button className="btn btn--danger" onClick={deleteDetails}>✕ Удалить узел</button>
+        </div>
+      )}
+
+      {/* ── Диалог подтверждения ── */}
+      {confirmBox && (
+        <div className="modal-backdrop" onClick={() => setConfirmBox(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal__title">{confirmBox.title}</div>
+            <p className="modal__text">{confirmBox.text}</p>
+            <div className="modal__row">
+              <button className="btn btn--ghost" onClick={() => setConfirmBox(null)}>Отмена</button>
+              <button
+                className="btn btn--danger"
+                onClick={async () => { setConfirmBox(null); await confirmBox.onYes() }}
+              >
+                {confirmBox.danger}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

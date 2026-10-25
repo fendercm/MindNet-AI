@@ -30,12 +30,25 @@ const renderInline = (text) => {
   return parts
 }
 
-const fmt = (date) => date.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+const HISTORY_KEY = 'mindnet.chat.history'
+const HISTORY_LIMIT = 60
+
+const loadHistory = () => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    const list = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) && list.length
+      ? list
+      : [{ role: 'assistant', content: WELCOME, timestamp: new Date().toISOString() }]
+  } catch {
+    return [{ role: 'assistant', content: WELCOME, timestamp: new Date().toISOString() }]
+  }
+}
+
+const fmt = (ts) => new Date(ts).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
 
 export default function ChatPanel({ onClose, onRefresh }) {
-  const [messages, setMessages] = useState([
-    { role: 'assistant', content: WELCOME, timestamp: new Date() },
-  ])
+  const [messages, setMessages] = useState(loadHistory)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const endRef = useRef(null)
@@ -45,6 +58,13 @@ export default function ChatPanel({ onClose, onRefresh }) {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
+  /* История переживает перезагрузку */
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(messages.slice(-HISTORY_LIMIT)))
+    } catch { /* переполнение хранилища — не критично */ }
+  }, [messages])
+
   useEffect(() => {
     taRef.current?.focus()
   }, [])
@@ -53,7 +73,7 @@ export default function ChatPanel({ onClose, onRefresh }) {
     const text = input.trim()
     if (!text || loading) return
 
-    setMessages((prev) => [...prev, { role: 'user', content: text, timestamp: new Date() }])
+    setMessages((prev) => [...prev, { role: 'user', content: text, timestamp: new Date().toISOString() }])
     setInput('')
     setLoading(true)
 
@@ -62,14 +82,14 @@ export default function ChatPanel({ onClose, onRefresh }) {
       setMessages((prev) => [...prev, {
         role: 'assistant',
         content: data.response || '…',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         actions: data.actions || [],
       }])
     } catch {
       setMessages((prev) => [...prev, {
         role: 'assistant',
         content: 'Не достучался до сервера. Убедись, что backend запущен.',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         error: true,
       }])
     } finally {
@@ -85,13 +105,13 @@ export default function ChatPanel({ onClose, onRefresh }) {
       setMessages((prev) => [...prev, {
         role: 'assistant',
         content: `Добавил «${action.skill}» в твой граф ✦`,
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
       }])
     } catch {
       setMessages((prev) => [...prev, {
         role: 'assistant',
         content: 'Не смог добавить навык — Neo4j не отвечает.',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         error: true,
       }])
     }
@@ -105,6 +125,11 @@ export default function ChatPanel({ onClose, onRefresh }) {
           <div className="chat__name">AI-ментор</div>
           <div className="chat__status">видит твой граф</div>
         </div>
+        <button
+          className="icon-btn"
+          title="Забыть историю"
+          onClick={() => setMessages([{ role: 'assistant', content: WELCOME, timestamp: new Date().toISOString() }])}
+        >⌫</button>
         <button className="icon-btn" onClick={onClose} title="Закрыть (Esc)">‹</button>
       </div>
 
