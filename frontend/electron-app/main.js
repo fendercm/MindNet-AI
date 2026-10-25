@@ -1,8 +1,7 @@
-const { app, BrowserWindow, session, ipcMain } = require('electron')
+const { app, BrowserWindow, shell } = require('electron')
 const path   = require('path')
-const { spawn, exec, execSync } = require('child_process')
+const { spawn, execSync } = require('child_process')
 const http   = require('http')
-const fs     = require('fs')
 
 // ── Режим ────────────────────────────────────────────────────
 const isDev = !app.isPackaged
@@ -15,6 +14,9 @@ const BACKEND_DIR = isDev
 const FRONTEND_DIST = isDev
   ? null   // dev: грузим http://localhost:5173
   : path.join(process.resourcesPath, 'frontend', 'index.html')
+
+// База и настройки пользователя: %APPDATA%\MindNet AI
+const DATA_DIR = path.join(app.getPath('appData'), 'MindNet AI')
 
 // ── Localhost не идёт через VPN ───────────────────────────────
 app.commandLine.appendSwitch('proxy-bypass-list', 'localhost,127.0.0.1,::1')
@@ -55,95 +57,11 @@ function setSplashStatus(text, pct) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  NEO4J AUTO-START
-// ─────────────────────────────────────────────────────────────
-function isPortOpen(port) {
-  return new Promise((resolve) => {
-    const req = http.request(
-      { hostname: '127.0.0.1', port: 7474, path: '/', method: 'GET', timeout: 1500 },
-      () => resolve(true)
-    )
-    req.on('error',   () => resolve(false))
-    req.on('timeout', () => { req.destroy(); resolve(false) })
-    req.end()
-  })
-}
-
-function tryStartNeo4jService() {
-  return new Promise((resolve) => {
-    // Пробуем имена сервиса по очереди
-    const attempts = [
-      'net start neo4j',
-      'net start "Neo4j Graph Database - neo4j"',
-    ]
-    let idx = 0
-    const next = () => {
-      if (idx >= attempts.length) { resolve(false); return }
-      exec(attempts[idx++], (err) => {
-        if (!err) { resolve(true) }
-        else next()
-      })
-    }
-    next()
-  })
-}
-
-function findNeo4jBat() {
-  const candidates = [
-    process.env['NEO4J_HOME'] && path.join(process.env['NEO4J_HOME'], 'bin', 'neo4j.bat'),
-    'C:\\neo4j\\bin\\neo4j.bat',
-    'C:\\Program Files\\Neo4j\\bin\\neo4j.bat',
-    path.join(process.env['LOCALAPPDATA'] || '', 'Programs', 'neo4j', 'bin', 'neo4j.bat'),
-  ].filter(Boolean)
-
-  return candidates.find(p => fs.existsSync(p)) || null
-}
-
-async function ensureNeo4j() {
-  setSplashStatus('Проверяю Neo4j...', 20)
-
-  // Уже запущен?
-  if (await isPortOpen(7474)) {
-    setSplashStatus('Neo4j уже работает ✓', 40)
-    return true
-  }
-
-  setSplashStatus('Запускаю Neo4j...', 25)
-
-  // Пробуем Windows Service
-  const svcStarted = await tryStartNeo4jService()
-  if (svcStarted) {
-    setSplashStatus('Сервис Neo4j запускается...', 35)
-  } else {
-    // Пробуем neo4j.bat console
-    const batPath = findNeo4jBat()
-    if (batPath) {
-      setSplashStatus('Запускаю Neo4j (bat)...', 35)
-      spawn('cmd', ['/c', batPath, 'console'], { detached: true, stdio: 'ignore' }).unref()
-    } else {
-      setSplashStatus('⚠ Не нашёл Neo4j — жди или запусти вручную', 35)
-    }
-  }
-
-  // Ждём до 30 секунд
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 1000))
-    setSplashStatus(`Жду Neo4j... (${i + 1}/30)`, 35 + i)
-    if (await isPortOpen(7474)) {
-      setSplashStatus('Neo4j готов ✓', 65)
-      return true
-    }
-  }
-
-  setSplashStatus('⚠ Neo4j не ответил — продолжаю без него', 65)
-  return false
-}
-
-// ─────────────────────────────────────────────────────────────
-//  PYTHON BACKEND
+//  BACKEND
 // ─────────────────────────────────────────────────────────────
 
-// Ищем рабочий Python-интерпретатор
+// Собранная версия: встроенный mindnet-backend.exe, Python не нужен.
+// Дев-режим: системный Python + uvicorn из папки backend.
 function findPython() {
   const candidates = ['py', 'python', 'python3']
   for (const cmd of candidates) {
@@ -158,31 +76,41 @@ function findPython() {
   return null
 }
 
-function startPythonBackend() {
-  setSplashStatus('Запускаю backend...', 68)
+function backendCommand() {
+  if (!isDev) {
+    return { cmd: path.join(BACKEND_DIR, 'mindnet-backend.exe'), args: [] }
+  }
+  const py = findPython()
+  return py && { cmd: py, args: ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000'] }
+}
 
-  const pyExe = findPython()
-  if (!pyExe) {
+function startPythonBackend() {
+  setSplashStatus('Запускаю backend...', 40)
+
+  const command = backendCommand()
+  if (!command) {
     console.error('[py] Python не найден! Установи Python и добавь в PATH.')
-    setSplashStatus('Python не найден — установи Python 3', 68)
+    setSplashStatus('Python не найден — установи Python 3', 40)
     return
   }
 
-  console.log(`[py] Starting backend with: ${pyExe}`)
+  console.log(`[py] Starting backend: ${command.cmd}`)
 
   pythonProcess = spawn(
-    pyExe,
-    ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000'],
+    command.cmd,
+    command.args,
     {
       cwd: BACKEND_DIR,
       env: {
         ...process.env,
+        MINDNET_DATA_DIR:        DATA_DIR,
         NO_PROXY:                'localhost,127.0.0.1,::1',
         no_proxy:                'localhost,127.0.0.1,::1',
         PYTHONDONTWRITEBYTECODE: '1',
         PYTHONUNBUFFERED:        '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     }
   )
 
@@ -248,6 +176,12 @@ function createMainWindow() {
     mainWindow.loadFile(FRONTEND_DIST)
   }
 
+  // Внешние ссылки (например «где взять ключ») — в системный браузер
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
   mainWindow.on('closed', () => { mainWindow = null })
 
   return new Promise((resolve) => {
@@ -264,19 +198,16 @@ app.whenReady().then(async () => {
 
   setSplashStatus('Запуск...', 10)
 
-  // 1. Neo4j
-  await ensureNeo4j()
-
-  // 2. Python backend
+  // 1. Backend
   startPythonBackend()
   const backendReady = await waitForBackend(30)
   if (backendReady) {
     setSplashStatus('Backend готов ✓', 90)
   } else {
-    setSplashStatus('⚠ Backend не ответил — проверь Python', 90)
+    setSplashStatus(isDev ? '⚠ Backend не ответил — проверь Python' : '⚠ Backend не ответил', 90)
   }
 
-  // 3. Главное окно
+  // 2. Главное окно
   setSplashStatus('Открываю приложение...', 95)
   await createMainWindow()
 

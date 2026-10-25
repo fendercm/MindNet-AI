@@ -9,6 +9,9 @@ const http = axios.create({
 
 export const api = {
   health: async () => (await http.get('/health')).data,
+  getSettings: async () => (await http.get('/settings')).data,
+  saveSettings: async (changes) => (await http.put('/settings', changes)).data,
+  testSettings: async () => (await http.post('/settings/test')).data,
   getNodes: async () => (await http.get('/nodes/')).data,
   createNode: async (node) => (await http.post('/nodes/', node)).data,
   updateNode: async (id, fields) => (await http.put(`/nodes/${id}`, fields)).data,

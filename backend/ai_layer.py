@@ -1,10 +1,18 @@
 # backend/ai_layer.py
 import os
+import sys
 import json
+from pathlib import Path
 import requests
 from dotenv import load_dotenv
+import settings
 
-load_dotenv()
+# .env — только для разработки; собранный exe берёт ключи из настроек приложения
+if not getattr(sys, "frozen", False):
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+
+# Порядок по умолчанию — из тех провайдеров, для которых есть ключ
+DEFAULT_ORDER = ["gemini", "openai", "deepseek", "grok", "qwen3"]
 
 
 class AILayer:
@@ -15,17 +23,21 @@ class AILayer:
     """
 
     def __init__(self):
+        settings.apply_saved()  # ключи из приложения перекрывают .env
+
         self.gemini_key   = os.getenv("GEMINI_API_KEY",   "")
         self.openai_key   = os.getenv("OPENAI_API_KEY",   "")
         self.deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
         self.grok_key     = os.getenv("GROK_API_KEY",     "")
         self.hf_key       = os.getenv("HF_API_KEY",       "")
 
-        # Порядок из .env, дефолт: gemini → qwen3 (Qwen2.5-72B via HuggingFace)
-        raw = os.getenv("AI_MODELS", "gemini,qwen3")
+        # Порядок из настроек; если не задан — все провайдеры с ключами
+        raw = os.getenv("AI_MODELS", "")
+        if not raw.strip():
+            raw = ",".join(m for m in DEFAULT_ORDER if self.has_key(m)) or "gemini,qwen3"
         self.model_priority = [m.strip() for m in raw.split(",") if m.strip()]
 
-        # Сессия ТОЛЬКО для AI запросов (Neo4j не трогает её)
+        # Отдельная сессия для AI-запросов — прокси действует только на неё
         self.session = requests.Session()
 
         use_proxy = os.getenv("USE_PROXY", "false").lower() == "true"
@@ -47,6 +59,19 @@ class AILayer:
         print(f"🤖 Порядок моделей: {self.model_priority}")
         self._check_keys()
 
+    def reload(self):
+        """Перечитывает ключи и прокси после изменения настроек."""
+        self.__init__()
+
+    def has_key(self, model: str) -> bool:
+        if model in ("qwen3", "llama4", "deepseek_flash"):
+            return bool(self.hf_key)
+        return bool(getattr(self, f"{model}_key", ""))
+
+    @property
+    def configured(self) -> bool:
+        return any(self.has_key(m) for m in self.model_priority)
+
     def _check_keys(self):
         print(f"   Gemini:   {'✅' if self.gemini_key   else '❌'}")
         print(f"   HF (Qwen3/Llama4): {'✅' if self.hf_key else '❌'}")
@@ -63,21 +88,25 @@ class AILayer:
 
         model   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
         full    = f"{system}\n\n{prompt}" if system else prompt
-        url     = (
-            f"https://generativelanguage.googleapis.com"
-            f"/v1beta/models/{model}:generateContent?key={self.gemini_key}"
-        )
+        # Ключ — в заголовке, а не в URL: иначе он попадает в тексты ошибок и логи
+        url     = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": full}]}],
             "generationConfig": {"temperature": 0.3, "maxOutputTokens": 4096},
         }
 
-        resp = self.session.post(url, json=payload, timeout=self.timeout)
+        resp = self.session.post(
+            url, json=payload, timeout=self.timeout,
+            headers={"x-goog-api-key": self.gemini_key},
+        )
         if resp.status_code == 429:
             raise Exception("Gemini 429: лимит запросов")
         if resp.status_code == 403:
             raise Exception("Gemini 403: регион заблокирован — нужен VPN/прокси")
-        resp.raise_for_status()
+        if resp.status_code in (400, 401) and "API_KEY_INVALID" in resp.text:
+            raise Exception("Gemini: неверный API-ключ")
+        if not resp.ok:
+            raise Exception(f"Gemini {resp.status_code}: {resp.text[:300]}")
 
         return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 

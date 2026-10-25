@@ -20,8 +20,8 @@
 
     "files": [
       "main.js",
-      "icon.png",
-      "icon.ico"
+      "splash.html",
+      "icon.png"
     ],
 
     "extraResources": [
@@ -31,18 +31,9 @@
         "filter": ["**/*"]
       },
       {
-        "from":   "../../backend",
+        "from":   "../../backend/build/dist/mindnet-backend",
         "to":     "backend",
-        "filter": [
-          "**/*.py",
-          "requirements.txt",
-          ".env",
-          "!__pycache__/**",
-          "!*.pyc",
-          "!venv/**",
-          "!.venv/**",
-          "!dist/**"
-        ]
+        "filter": ["**/*"]
       }
     ],
 

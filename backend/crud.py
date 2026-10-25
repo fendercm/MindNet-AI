@@ -3,150 +3,114 @@ import uuid
 from datetime import datetime
 from database import db
 
+NODE_FIELDS = "id, title, description, node_type, level, created_at"
+
 
 def ensure_constraints():
-    """Создаёт уникальный constraint на title (вызывать при старте)."""
-    try:
-        db.query("CREATE CONSTRAINT unique_node_title IF NOT EXISTS FOR (n:KnowledgeNode) REQUIRE n.title IS UNIQUE")
-    except Exception:
-        pass  # старая версия Neo4j — игнорируем
+    """Схема и ограничения создаются в db.connect() — оставлено для совместимости."""
 
 
 def create_node(title: str, description: str,
                 node_type: str, level: int):
     """
-    MERGE по title — никаких дублей.
-    Если узел уже есть — обновляет level и description.
+    Upsert по title — никаких дублей.
+    Если узел уже есть — обновляет level, description и тип.
     """
-    query = """
-    MERGE (n:KnowledgeNode {title: $title})
-    ON CREATE SET
-        n.id          = $id,
-        n.description = $description,
-        n.node_type   = $node_type,
-        n.level       = $level,
-        n.created_at  = $created_at
-    ON MATCH SET
-        n.description = $description,
-        n.node_type   = $node_type,
-        n.level       = $level
-    RETURN n
-    """
-    result = db.query(query, {
-        "id":          str(uuid.uuid4()),
-        "title":       title.strip(),
-        "description": description,
-        "node_type":   node_type,
-        "level":       level,
-        "created_at":  datetime.now().isoformat(),
-    })
-    return result[0]["n"] if result else None
+    title = title.strip()
+    db.query(
+        """
+        INSERT INTO nodes (id, title, description, node_type, level, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(title) DO UPDATE SET
+            description = excluded.description,
+            node_type   = excluded.node_type,
+            level       = excluded.level
+        """,
+        (str(uuid.uuid4()), title, description or "", node_type, level,
+         datetime.now().isoformat()),
+    )
+    rows = db.query(f"SELECT {NODE_FIELDS} FROM nodes WHERE title = ?", (title,))
+    return rows[0] if rows else None
 
 
 def get_all_nodes():
     """Возвращает все узлы как список dict"""
-    result = db.query("MATCH (n:KnowledgeNode) RETURN n")
-    nodes = []
-    for record in result:
-        n = record["n"]
-        # Neo4j Node → dict
-        node_dict = dict(n)
-        nodes.append(node_dict)
-    return nodes
+    return db.query(f"SELECT {NODE_FIELDS} FROM nodes ORDER BY created_at")
 
 
 def create_edge(from_node: str, to_node: str,
                 relation_type: str):
     """
-    MERGE — не создаёт дубли связей.
-    Ищет узлы по id.
+    Не создаёт дубли связей. Ищет узлы по id.
+    Возвращает связь или None, если одного из узлов нет.
     """
-    query = """
-    MATCH (a:KnowledgeNode {id: $from_id})
-    MATCH (b:KnowledgeNode {id: $to_id})
-    MERGE (a)-[r:RELATED_TO {relation_type: $relation_type}]->(b)
-    ON CREATE SET
-        r.id         = $edge_id,
-        r.created_at = $created_at
-    RETURN r, a.id as from_id, b.id as to_id
-    """
-    result = db.query(query, {
-        "from_id":       from_node,
-        "to_id":         to_node,
-        "edge_id":       str(uuid.uuid4()),
-        "relation_type": relation_type,
-        "created_at":    datetime.now().isoformat(),
-    })
-    print(f"🔗 create_edge result: {result}")
-    return result[0] if result else None
+    found = db.query("SELECT id FROM nodes WHERE id IN (?, ?)", (from_node, to_node))
+    if len({r["id"] for r in found}) < len({from_node, to_node}):
+        return None
+    db.query(
+        """
+        INSERT OR IGNORE INTO edges (id, from_id, to_id, relation_type, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (str(uuid.uuid4()), from_node, to_node, relation_type,
+         datetime.now().isoformat()),
+    )
+    rows = db.query(
+        """
+        SELECT id, from_id AS "from", to_id AS "to", relation_type
+        FROM edges WHERE from_id = ? AND to_id = ? AND relation_type = ?
+        """,
+        (from_node, to_node, relation_type),
+    )
+    return rows[0] if rows else None
 
 
 def get_all_edges():
     """Возвращает все связи как список dict"""
-    query = """
-    MATCH (a:KnowledgeNode)-[r:RELATED_TO]->(b:KnowledgeNode)
-    RETURN
-        r.id            AS id,
-        a.id            AS from,
-        b.id            AS to,
-        r.relation_type AS relation_type
-    """
-    result = db.query(query)
-    edges = []
-    for record in result:
-        edges.append({
-            "id":            record["id"],
-            "from":          record["from"],
-            "to":            record["to"],
-            "relation_type": record["relation_type"],
-        })
-    print(f"🔗 get_all_edges: {len(edges)} рёбер")
-    return edges
+    return db.query(
+        """
+        SELECT e.id, e.from_id AS "from", e.to_id AS "to", e.relation_type,
+               a.title AS from_title, b.title AS to_title
+        FROM edges e
+        JOIN nodes a ON a.id = e.from_id
+        JOIN nodes b ON b.id = e.to_id
+        ORDER BY e.created_at
+        """
+    )
 
 
 def delete_all_nodes():
     """Удалить всё"""
-    db.query("MATCH (n) DETACH DELETE n")
+    db.query("DELETE FROM edges")
+    db.query("DELETE FROM nodes")
     return {"deleted": True}
+
 
 def update_node(node_id: str, title: str = None, description: str = None,
                 node_type: str = None, level: int = None):
     """Обновляет поля узла по id (только переданные)"""
-    sets = []
-    params = {"node_id": node_id}
-    if title is not None:
-        sets.append("n.title = $title")
-        params["title"] = title.strip()
-    if description is not None:
-        sets.append("n.description = $description")
-        params["description"] = description
-    if node_type is not None:
-        sets.append("n.node_type = $node_type")
-        params["node_type"] = node_type
-    if level is not None:
-        sets.append("n.level = $level")
-        params["level"] = level
-    if not sets:
-        return get_node(node_id)
-    query = f"""
-    MATCH (n:KnowledgeNode {{id: $node_id}})
-    SET {", ".join(sets)}
-    RETURN n
-    """
-    result = db.query(query, params)
-    return dict(result[0]["n"]) if result else None
+    fields = {
+        "title":       title.strip() if title is not None else None,
+        "description": description,
+        "node_type":   node_type,
+        "level":       level,
+    }
+    sets = {k: v for k, v in fields.items() if v is not None}
+    if sets:
+        assignments = ", ".join(f"{k} = ?" for k in sets)
+        db.query(f"UPDATE nodes SET {assignments} WHERE id = ?", (*sets.values(), node_id))
+    return get_node(node_id)
 
 
 def get_node(node_id: str):
     """Возвращает один узел по id или None"""
-    result = db.query("MATCH (n:KnowledgeNode {id: $node_id}) RETURN n", {"node_id": node_id})
-    return dict(result[0]["n"]) if result else None
+    rows = db.query(f"SELECT {NODE_FIELDS} FROM nodes WHERE id = ?", (node_id,))
+    return rows[0] if rows else None
 
 
 def delete_node(node_id: str):
     """Удаляет узел и все его связи. Возвращает факт удаления."""
-    result = db.query(
-        "MATCH (n:KnowledgeNode {id: $node_id}) DETACH DELETE n RETURN count(n) AS deleted",
-        {"node_id": node_id},
-    )
-    return bool(result and result[0]["deleted"])
+    if not get_node(node_id):
+        return False
+    db.query("DELETE FROM nodes WHERE id = ?", (node_id,))
+    return True

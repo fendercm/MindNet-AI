@@ -110,7 +110,7 @@ export default function ChatPanel({ onClose, onRefresh }) {
     } catch {
       setMessages((prev) => [...prev, {
         role: 'assistant',
-        content: 'Не смог добавить навык — Neo4j не отвечает.',
+        content: 'Не смог добавить навык — сервер или AI не отвечает.',
         timestamp: new Date().toISOString(),
         error: true,
       }])

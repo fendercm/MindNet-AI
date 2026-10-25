@@ -1,5 +1,6 @@
 // frontend/src/components/GraphCanvas.jsx
 import ChatPanel from './ChatPanel'
+import SettingsModal from './SettingsModal'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, {
   addEdge, Background, Controls, MiniMap, Panel,
@@ -138,10 +139,11 @@ const GraphCanvas = () => {
   const [project, setProject] = useState(null)
   const [recs, setRecs] = useState([])
   const [showPanel, setShowPanel] = useState(false)
-  const [aiPreview, setAiPreview] = useState(null)
   const [notif, setNotif] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [dbStatus, setDbStatus] = useState(null)
+  const [aiReady, setAiReady] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(null) // null | 'manual' | 'first'
   const [nodeCount, setNodeCount] = useState(0)
   const [booting, setBooting] = useState(true)
   const [epoch, setEpoch] = useState(0)
@@ -166,9 +168,12 @@ const GraphCanvas = () => {
   const checkHealth = useCallback(async () => {
     try {
       const d = await api.health()
-      setDbStatus(Boolean(d.neo4j))
+      setDbStatus(Boolean(d.db))
+      setAiReady(Boolean(d.ai_configured))
+      return d
     } catch {
       setDbStatus(false)
+      return null
     }
   }, [])
 
@@ -241,9 +246,9 @@ const GraphCanvas = () => {
         setViewport(viewportFor(bounds, cw, ch))
       }
       setEpoch((e) => e + 1)
-      if (!silent && !dbStatus) notify('Neo4j недоступен — граф пуст', false)
+      if (!silent && !dbStatus) notify('База недоступна — граф пуст', false)
     } catch {
-      notify('Не удалось загрузить граф — сервер или база спит', false)
+      notify('Не удалось загрузить граф — сервер не отвечает', false)
     }
   }, [dbStatus, notify, setEdges, setNodes, sidebarOpen])
 
@@ -294,10 +299,15 @@ const GraphCanvas = () => {
     let alive = true
     const t0 = Date.now()
     const boot = async () => {
-      await Promise.all([loadGraph({ silent: true }), checkHealth()])
+      const [, health] = await Promise.all([loadGraph({ silent: true }), checkHealth()])
       if (!alive) return
       const wait = Math.max(0, 950 - (Date.now() - t0))
-      setTimeout(() => alive && setBooting(false), wait)
+      setTimeout(() => {
+        if (!alive) return
+        setBooting(false)
+        // Первый запуск без ключей — сразу предлагаем подключить AI
+        if (health && !health.ai_configured) setSettingsOpen('first')
+      }, wait)
     }
     boot()
     return () => { alive = false }
@@ -313,7 +323,7 @@ const GraphCanvas = () => {
         setTimeout(() => searchRef.current?.focus(), 380)
       }
       if (e.key === 'Escape') {
-        setChatOpen(false); setShowPanel(false); setAiPreview(null)
+        setChatOpen(false); setShowPanel(false); setSettingsOpen(null)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -367,22 +377,26 @@ const GraphCanvas = () => {
       await loadGraph({ silent: true })
       notify(`✓ ${title} теперь в твоей вселенной`)
     } catch {
-      notify('Не получилось добавить — Neo4j спит?', false)
+      notify('Не получилось добавить — сервер не отвечает', false)
     }
   }
 
+  /* Без ключа AI-кнопки ведут в настройки, а не в ошибку */
+  const needAi = () => {
+    if (aiReady === false) {
+      setSettingsOpen('manual')
+      notify('Сначала подключи AI — вставь ключ', false)
+      return true
+    }
+    return false
+  }
+
   const addSkills = async () => {
-    if (!aiText.trim() || analyzing) return
+    if (!aiText.trim() || analyzing || needAi()) return
     setAnalyzing(true)
-    setAiPreview(null)
     try {
       const res = await api.aiExtractSkills(aiText)
       if (res.error) { notify(res.error, false); return }
-      if (!res.neo4j_available) {
-        setAiPreview({ skills: res.ai_skills || [], gaps: res.gaps || [] })
-        notify(`AI увидел ${res.ai_skills?.length || 0} навыков, но Neo4j недоступен`, false)
-        return
-      }
       await loadGraph({ silent: true })
       setAiText('')
       notify(`✓ Родилось ${res.skills?.length || 0} новых навыков`)
@@ -394,6 +408,7 @@ const GraphCanvas = () => {
   }
 
   const suggestLinks = async () => {
+    if (needAi()) return
     setLoading(true)
     try {
       const r = await api.aiSuggestConnections()
@@ -408,6 +423,7 @@ const GraphCanvas = () => {
   }
 
   const genProject = async () => {
+    if (needAi()) return
     setLoading(true)
     try {
       const r = await api.aiGenerateProject()
@@ -421,6 +437,7 @@ const GraphCanvas = () => {
   }
 
   const loadRecs = async () => {
+    if (needAi()) return
     try {
       const r = await api.aiRecommendations()
       setRecs(r.recommendations || []); setProject(null); setShowPanel(true)
@@ -527,6 +544,8 @@ const GraphCanvas = () => {
       const data = JSON.parse(await file.text())
       if (!Array.isArray(data.nodes)) throw new Error('нет nodes')
       let ok = 0
+      /* id из файла → id в базе: узлы создаются заново, связи переводим */
+      const idMap = new Map()
       for (const n of data.nodes) {
         if (!n?.title) continue
         await api.createNode({
@@ -534,13 +553,18 @@ const GraphCanvas = () => {
           description: n.description ? String(n.description) : '',
           node_type: n.node_type || 'skill',
           level: n.level || 1,
-        }).then(() => { ok += 1 }).catch(() => {})
+        }).then((created) => {
+          ok += 1
+          if (n.id != null && created?.id) idMap.set(String(n.id), String(created.id))
+        }).catch(() => {})
       }
       for (const e of data.edges || []) {
-        if (e?.from == null || e?.to == null) continue
+        const from = idMap.get(String(e?.from))
+        const to = idMap.get(String(e?.to))
+        if (!from || !to) continue
         await api.createEdge({
-          from_node: String(e.from),
-          to_node: String(e.to),
+          from_node: from,
+          to_node: to,
           relation_type: e.relation_type || 'related_to',
         }).catch(() => {})
       }
@@ -581,7 +605,7 @@ const GraphCanvas = () => {
                 <div className="brand__name">MindNet AI</div>
                 <div className={`db-pill db-pill--${dbStatus === null ? 'wait' : dbStatus ? 'ok' : 'err'}`}>
                   <span className="db-pill__dot" />
-                  {dbStatus === null ? 'соединение…' : dbStatus ? `neo4j · ${nodeCount} знаний` : 'neo4j недоступен'}
+                  {dbStatus === null ? 'соединение…' : dbStatus ? `${nodeCount} знаний` : 'сервер не отвечает'}
                 </div>
               </div>
             </div>
@@ -730,9 +754,19 @@ const GraphCanvas = () => {
           </div>
 
           <div className="sidebar__foot">
-            <button className="chat-btn" onClick={() => setChatOpen(true)}>
-              <span className="chat-btn__dot" /> Чат с ментором
-            </button>
+            <div className="sidebar__foot-row">
+              <button className="chat-btn" onClick={() => { if (!needAi()) setChatOpen(true) }}>
+                <span className="chat-btn__dot" /> Чат с ментором
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => setSettingsOpen('manual')}
+                title={aiReady === false ? 'Настройки — AI не подключён' : 'Настройки'}
+              >
+                ⚙
+                {aiReady === false && <span className="icon-btn__badge" />}
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -771,7 +805,7 @@ const GraphCanvas = () => {
           onNodeClick={(_, n) => {
             if (n.type === 'skill') {
               setDetails({ id: n.id, ...n.data })
-              setShowPanel(false); setAiPreview(null)
+              setShowPanel(false)
             }
           }}
           connectionLineType="smoothstep"
@@ -912,33 +946,13 @@ const GraphCanvas = () => {
         </div>
       )}
 
-      {/* ── AI нашёл навыки, но база спит ── */}
-      {aiPreview && (
-        <div className="result result--warn">
-          <button className="result__close" onClick={() => setAiPreview(null)}>×</button>
-          <div className="result__header" style={{ color: '#fde68a' }}>
-            <span>⚠</span> Neo4j не отвечает
-          </div>
-          <p className="result__desc">AI уже разглядел {aiPreview.skills.length} навыков — запусти базу и повтори.</p>
-          {aiPreview.skills.map((s, i) => {
-            const c = CAT[s.category] || CAT.skill
-            return (
-              <div key={i} className="ai-row" style={{ '--c-rgb': c.rgb }}>
-                <span className="ai-row__icon">{c.icon}</span>
-                <span className="ai-row__name">{s.name}</span>
-                <div className="ai-row__bars">
-                  {[1, 2, 3, 4, 5].map((j) => (
-                    <div key={j} className={`ai-row__bar${j <= (s.level || 1) ? ' ai-row__bar--on' : ''}`} />
-                  ))}
-                </div>
-                <span className="ai-row__lvl">L{s.level || 1}</span>
-              </div>
-            )
-          })}
-          <div className="warn-note" style={{ marginTop: 10 }}>
-            Запусти <strong>Neo4j Desktop → Start</strong> и нажми «Извлечь навыки» ещё раз.
-          </div>
-        </div>
+      {/* ── Настройки / первый запуск ── */}
+      {settingsOpen && (
+        <SettingsModal
+          firstRun={settingsOpen === 'first'}
+          onClose={() => setSettingsOpen(null)}
+          onSaved={(s) => setAiReady(Boolean(s.ai_configured))}
+        />
       )}
 
       {/* ── Чат ── */}

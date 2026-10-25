@@ -1,140 +1,88 @@
 # backend/database.py
-from neo4j import GraphDatabase
 import os
-<<<<<<< HEAD
-import socket
-=======
-import time
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+import sqlite3
+import sys
+import threading
+from pathlib import Path
 
 
-class Neo4jConnection:
+def data_dir() -> Path:
+    """
+    Папка с данными пользователя (база, настройки).
+    Electron передаёт MINDNET_DATA_DIR; в дев-режиме — backend/data.
+    """
+    env = os.getenv("MINDNET_DATA_DIR")
+    if env:
+        path = Path(env)
+    elif getattr(sys, "frozen", False):
+        path = Path(os.getenv("APPDATA", Path.home())) / "MindNet AI"
+    else:
+        path = Path(__file__).resolve().parent / "data"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS nodes (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    node_type   TEXT NOT NULL DEFAULT 'skill',
+    level       INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS edges (
+    id            TEXT PRIMARY KEY,
+    from_id       TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    to_id         TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL DEFAULT 'related_to',
+    created_at    TEXT NOT NULL,
+    UNIQUE (from_id, to_id, relation_type)
+);
+"""
+
+
+class Database:
+    """Встроенная SQLite-база: один файл в папке пользователя, ничего ставить не нужно."""
+
     def __init__(self):
-        self.driver = None
-        self._connected = False
+        self.conn = None
+        self.path = None
+        # FastAPI гоняет sync-эндпоинты в пуле потоков — одно соединение под замком
+        self._lock = threading.RLock()
 
-    def connect(self):
-        uri      = os.getenv("NEO4J_URI",      "bolt://127.0.0.1:7687")
-        user     = os.getenv("NEO4J_USER",     "neo4j")
-        password = os.getenv("NEO4J_PASSWORD", "password")
-
-        # Явно говорим Python НЕ использовать прокси для локальных адресов
-        os.environ["NO_PROXY"]  = "localhost,127.0.0.1,::1,0.0.0.0"
-        os.environ["no_proxy"]  = "localhost,127.0.0.1,::1,0.0.0.0"
-
-        # Убираем HTTP_PROXY переменные чтобы neo4j driver не подхватил
-        for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
-            os.environ.pop(var, None)
-
-        print(f"🔌 Подключаемся к Neo4j: {uri}")
-
-        # Сначала проверим TCP соединение
-        self._check_port(uri)
-
-        try:
-            self.driver = GraphDatabase.driver(
-                uri,
-                auth=(user, password),
-                connection_timeout=5,
-                max_connection_lifetime=3600,
-                encrypted=False,
-            )
-            self.driver.verify_connectivity()
-<<<<<<< HEAD
-            print("✅ Neo4j подключён успешно!")
-
-        except Exception as e:
-            print(f"❌ Neo4j ошибка: {e}")
-            self._print_help(uri)
-            raise e
-=======
-            self._connected = True
-            print(f"✅ Neo4j подключён: {uri}")
-
-        except Exception as e:
-            self._connected = False
-            self.driver = None
-            print(f"⚠️  Neo4j недоступен: {e}")
-            print("   Приложение запускается без БД.")
-            print("   Запусти Neo4j Desktop и перезапусти сервер.")
+    def connect(self, path=None):
+        self.path = Path(path) if path else data_dir() / "mindnet.db"
+        self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.executescript(SCHEMA)
+        self.conn.commit()
+        print(f"✅ База: {self.path}")
 
     def is_connected(self) -> bool:
-        return self._connected
+        return self.conn is not None
 
-    def reconnect(self):
-        if self.driver:
+    def query(self, sql: str, params=()):
+        """Выполняет запрос в транзакции, возвращает строки как list[dict]."""
+        if not self.conn:
+            raise Exception("База данных не открыта")
+        with self._lock:
             try:
-                self.driver.close()
+                cur = self.conn.execute(sql, params)
+                rows = [dict(r) for r in cur.fetchall()]
+                self.conn.commit()
+                return rows
             except Exception:
-                pass
-        self.connect()
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
-
-    def _check_port(self, uri: str):
-        """Проверяет TCP доступность порта до подключения"""
-        try:
-            # Парсим host:port из bolt://127.0.0.1:7687
-            host_port = uri.replace("bolt://", "").replace("neo4j://", "")
-            host, port = host_port.split(":")
-            port = int(port)
-
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(3)
-            result = sock.connect_ex((host, port))
-            sock.close()
-
-            if result == 0:
-                print(f"✅ TCP порт {host}:{port} — доступен")
-            else:
-                print(f"❌ TCP порт {host}:{port} — недоступен (код {result})")
-                print("   Neo4j Desktop запущен? Статус RUNNING?")
-
-        except Exception as e:
-            print(f"⚠️ Не удалось проверить порт: {e}")
-
-    def _print_help(self, uri: str):
-        print("\n" + "="*50)
-        print("💡 ДИАГНОСТИКА Neo4j:")
-        print(f"   URI: {uri}")
-        print("   1. Neo4j Desktop → БД → статус RUNNING?")
-        print("   2. PowerShell: Test-NetConnection 127.0.0.1 -Port 7687")
-        print("   3. PowerShell: netstat -ano | findstr 7687")
-        print("   4. VPN: Outline не должен мешать 127.0.0.1")
-        print("="*50 + "\n")
-
-    def query(self, query: str, parameters: dict = None):
-<<<<<<< HEAD
-        if not self.driver:
-            raise Exception("Neo4j не подключён!")
-        with self.driver.session() as session:
-            result = session.run(query, parameters or {})
-            return [record for record in result]
-=======
-        if not self._connected or not self.driver:
-            # Попытка переподключения один раз
-            self.reconnect()
-            if not self._connected:
-                raise Exception("База данных недоступна. Запусти Neo4j Desktop.")
-        try:
-            with self.driver.session() as session:
-                result = session.run(query, parameters or {})
-                return [record for record in result]
-        except Exception as e:
-            self._connected = False
-            raise e
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+                self.conn.rollback()
+                raise
 
     def close(self):
-        if self.driver:
-            try:
-                self.driver.close()
-            except Exception:
-                pass
-            print("🔌 Neo4j отключён")
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+            print("🔌 База закрыта")
 
 
-<<<<<<< HEAD
-db = Neo4jConnection()
-=======
-db = Neo4jConnection()
->>>>>>> 0aa12d187cd12661ddc95506dfe0b18ce5a7718e
+db = Database()

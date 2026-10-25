@@ -1,7 +1,9 @@
 import sys
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+for _stream in (sys.stdout, sys.stderr):
+    if _stream:  # в собранном exe без консоли потоков может не быть
+        _stream.reconfigure(encoding='utf-8', errors='replace')
 
+import sqlite3
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -9,15 +11,14 @@ from pydantic import BaseModel
 from typing import Optional
 from database import db
 import crud
+import settings
 from schemas import NodeCreate, EdgeCreate, NodeUpdate
 from ai_service import AIService
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.connect()  # мягкий старт — не выбрасывает исключение
-    if db.is_connected():
-        crud.ensure_constraints()
+    db.connect()
     print("🚀 MindNet AI запущен")
     yield
     db.close()
@@ -43,9 +44,31 @@ def read_root():
 def health():
     return {
         "status": "ok",
-        "neo4j": db.is_connected(),
+        "db": db.is_connected(),
+        "ai_configured": ai_service.ai.configured,
         "ai_models": ai_service.ai.model_priority,
     }
+
+
+@app.get("/settings")
+def get_settings():
+    """Настройки для экрана настроек (ключи — только маской)"""
+    return settings.public_view()
+
+
+@app.put("/settings")
+def put_settings(changes: dict):
+    """Сохранить настройки и сразу перечитать их в AI-слое"""
+    view = settings.update(changes)
+    ai_service.ai.reload()
+    return {**view, "ai_configured": ai_service.ai.configured, "ai_models": ai_service.ai.model_priority}
+
+
+@app.post("/settings/test")
+def test_settings():
+    """Короткий запрос к AI — проверить, что ключи рабочие"""
+    result = ai_service.ai.query("Ответь одним словом: ок", return_json=False)
+    return {"success": result["success"], "model": result.get("model"), "error": result.get("error")}
 
 
 @app.post("/nodes/")
@@ -72,13 +95,16 @@ def list_nodes():
 @app.put("/nodes/{node_id}")
 def update_node(node_id: str, node: NodeUpdate):
     """Обновить поля узла по id"""
-    result = crud.update_node(
-        node_id,
-        node.title,
-        node.description,
-        node.node_type,
-        node.level,
-    )
+    try:
+        result = crud.update_node(
+            node_id,
+            node.title,
+            node.description,
+            node.node_type,
+            node.level,
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="Узел с таким названием уже есть")
     if not result:
         raise HTTPException(status_code=404, detail="Node not found")
     return result
@@ -229,33 +255,13 @@ def get_recommendations():
 @app.delete("/nodes/all/")
 def delete_all_nodes():
     """Удалить все узлы и связи из базы"""
-    query = "MATCH (n) DETACH DELETE n"
-    result = db.query(query)
-    return {"message": f"Deleted all nodes and relationships", "deleted": result}
+    result = crud.delete_all_nodes()
+    return {"message": "Deleted all nodes and relationships", "deleted": result["deleted"]}
 
 
 def _node_to_dict(node):
-    """Конвертирует neo4j.graph.Node в dict"""
-    # Если уже dict — возвращаем как есть
-    if isinstance(node, dict):
-        return node
-
-    # neo4j.graph.Node ведёт себя как dict!
-    try:
-        return dict(node)
-    except:
-        pass
-
-    # Если есть свойства как атрибут
-    if hasattr(node, 'properties'):
-        return dict(node.properties)
-
-    # Если есть _properties (внутренний)
-    if hasattr(node, '_properties'):
-        return dict(node._properties)
-
-    # Fallback: возвращаем как есть
-    return node
+    """Приводит узел к dict"""
+    return node if isinstance(node, dict) else dict(node)
 
 
 
@@ -473,3 +479,9 @@ def chat_with_mentor(request: ChatMessage):
             "actions": [],
             "context": {}
         }
+
+if __name__ == "__main__":
+    # Точка входа собранного backend.exe (PyInstaller)
+    import os
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("MINDNET_PORT", "8000")), log_level="info")

@@ -39,8 +39,15 @@ desktop.ini
 *.log
 logs/
 
-# Neo4j
-neo4j-data/
+# AI assistants
 .aider*
 
 .claude/
+
+# Release builds
+release/
+*.zip
+
+# Local data (SQLite, settings)
+backend/data/
+backend/.build-venv/
